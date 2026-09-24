@@ -87,6 +87,9 @@
   let flushing = false;
   let timer = null;
   let errorShown = false;
+  const failed = new Set(); // 失敗した単位。次に訳文表示へ切り替えたとき再試行する
+  const MAX_TRIES = 3;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function enqueue(u) {
     if (u.requested || u.dead) return;
@@ -95,6 +98,23 @@
     queue.push(u);
     clearTimeout(timer);
     timer = setTimeout(flushQueue, 60);
+  }
+
+  // offscreen の翻訳処理を呼ぶ。通信自体の失敗（拡張機能側の再起動など）は数回まで再試行
+  async function callTranslator(type, texts) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await chrome.runtime.sendMessage({ type: 'ensureOffscreen' });
+        const res = await chrome.runtime.sendMessage({ type, texts, to: 'offscreen' });
+        if (res) return res;
+      } catch (e) {
+        if (/context invalidated/i.test(e.message)) {
+          return { ok: false, fatal: true, error: '拡張機能が更新されました。ページを再読み込みしてください。' };
+        }
+      }
+      await sleep(1000 * (attempt + 1));
+    }
+    return { ok: false, fatal: false, error: '翻訳処理と通信できませんでした。' };
   }
 
   async function flushQueue() {
@@ -112,18 +132,41 @@
           batch.push(queue.shift());
           chars += len;
         }
-        const res = await chrome.runtime.sendMessage({ type: 'translate', texts: batch.map((u) => u.payload.html) });
-        if (!res || !res.ok) {
-          batch.concat(queue).forEach((u) => { u.requested = false; });
+        const res = await callTranslator('translate', batch.map((u) => u.payload.html));
+
+        if (res.ok) {
+          res.translations.forEach((html, i) => {
+            try { applyTranslation(batch[i], html); }
+            catch (e) { batch[i].dead = true; console.warn('[translate-toggle] apply failed', e); }
+          });
+          continue;
+        }
+        if (res.fatal) {
+          // 設定の問題など。残りも止めて、設定を直したあとの切り替えで再開する
+          for (const u of batch.concat(queue)) { u.requested = false; failed.add(u); }
           queue = [];
-          showError(res ? res.error : 'no response');
+          showError(res.error);
           break;
         }
-        res.translations.forEach((html, i) => applyTranslation(batch[i], html));
+        // 一時的な失敗：この単位だけ後ろに回して再試行し、ほかの段落の翻訳は続ける
+        console.warn('[translate-toggle]', res.error);
+        for (const u of batch) {
+          u.tries = (u.tries || 0) + 1;
+          if (u.tries < MAX_TRIES) queue.push(u);
+          else { u.requested = false; u.tries = 0; failed.add(u); }
+        }
+        if (batch.some((u) => failed.has(u))) showError(`一部の段落を翻訳できませんでした（${res.error}）。Alt+T で原文に戻して再度 Alt+T を押すと再試行します。`);
+        await sleep(2000);
       }
     } finally {
       flushing = false;
     }
+  }
+
+  function retryFailed() {
+    const list = [...failed];
+    failed.clear();
+    for (const u of list) if (!u.dead && u.parent.isConnected) enqueue(u);
   }
 
   // ---------- シリアライズ / 復元 ----------
@@ -237,6 +280,7 @@
 
   // ---------- UI（原文ツールチップ・エラー表示） ----------
   const host = document.createElement('div');
+  host.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0;z-index:2147483647;';
   ours.add(host);
   const shadow = host.attachShadow({ mode: 'closed' });
   shadow.innerHTML = `<style>
@@ -244,20 +288,85 @@
       background: #1f2937; color: #f9fafb; border-radius: 6px; padding: 8px 10px;
       box-shadow: 0 4px 16px rgba(0,0,0,.25); pointer-events: none; }
     .tip { max-width: min(520px, 90vw); display: none; white-space: pre-wrap; }
-    .toast { right: 16px; bottom: 16px; max-width: 360px; background: #991b1b; display: none; }
+    .toast { right: 16px; bottom: 16px; max-width: 360px; display: none; }
+    .toast.error { background: #991b1b; }
+    .busy { position: absolute; z-index: 2147483647; font: 12px/1.5 system-ui, sans-serif; background: #1f2937;
+      color: #f9fafb; padding: 2px 8px; border-radius: 4px; pointer-events: none; }
+    .flash { position: absolute; z-index: 2147483647; border: 2px solid #2563eb; border-radius: 6px;
+      pointer-events: none; animation: fade 1.8s forwards; }
+    @keyframes fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
   </style><div class="tip"></div><div class="toast"></div>`;
   const tip = shadow.querySelector('.tip');
   const toast = shadow.querySelector('.toast');
 
+  let toastTimer = null;
+  function showToast(text, isError = false) {
+    toast.textContent = text;
+    toast.className = isError ? 'toast error' : 'toast';
+    toast.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.style.display = 'none'; errorShown = false; }, 6000);
+  }
+
   function showError(err) {
     if (errorShown) return;
     errorShown = true;
-    toast.textContent = err === 'NO_KEY'
+    showToast(err === 'NO_KEY'
       ? 'APIキーが未設定です。拡張機能のオプションで Azure Translator のキーを設定してください。'
-      : `翻訳に失敗しました: ${err}`;
-    toast.style.display = 'block';
-    setTimeout(() => { toast.style.display = 'none'; errorShown = false; }, 6000);
+      : `翻訳に失敗しました: ${err}`, true);
     chrome.runtime.sendMessage({ type: 'state', state: 'error' });
+  }
+
+  // ページ座標で要素の位置に印を出す
+  function placeAt(div, el, pad = 0) {
+    const r = el.getBoundingClientRect();
+    div.style.left = r.left + scrollX - pad + 'px';
+    div.style.top = r.top + scrollY - pad + 'px';
+    return r;
+  }
+  function showBusy(el) {
+    const d = document.createElement('div');
+    d.className = 'busy';
+    d.textContent = '高品質モデルで再翻訳中…';
+    shadow.appendChild(d);
+    placeAt(d, el);
+    d.style.top = Math.max(0, parseFloat(d.style.top) - 24) + 'px';
+    return d;
+  }
+  function flash(el) {
+    const d = document.createElement('div');
+    d.className = 'flash';
+    shadow.appendChild(d);
+    const r = placeAt(d, el, 4);
+    d.style.width = r.width + 8 + 'px';
+    d.style.height = r.height + 8 + 'px';
+    setTimeout(() => d.remove(), 1800);
+  }
+
+  // ---------- 高品質モデルでの段落再翻訳 ----------
+  async function retranslateAtCursor() {
+    if (!active || mode !== 'translated' || !lastMouse) return;
+    const el = document.elementFromPoint(lastMouse.clientX, lastMouse.clientY);
+    const us = (el ? unitsAt(el) : []).filter((u) => u.ready && !u.dead && !u.hqPending);
+    if (!us.length) { showToast('再翻訳したい段落の上にマウスを置いてから押してください。'); return; }
+    const anchor = us[0].parent;
+    const busy = showBusy(anchor);
+    us.forEach((u) => { u.hqPending = true; });
+    try {
+      const res = await callTranslator('translateHQ', us.map((u) => u.payload.html));
+      if (!res.ok) { showError(res.error); return; }
+      res.translations.forEach((html, i) => {
+        const u = us[i];
+        if (u.state === 'translated') show(u, 'original'); // 旧訳を外してから差し替え
+        if (u.dead) return;
+        applyTranslation(u, html);
+        u.hq = true;
+      });
+      if (anchor.isConnected) flash(anchor);
+    } finally {
+      busy.remove();
+      us.forEach((u) => { u.hqPending = false; });
+    }
   }
 
   function unitsAt(el) {
@@ -274,7 +383,7 @@
     const el = document.elementFromPoint(x, y);
     const us = el ? unitsAt(el) : [];
     if (!us.length) { tip.style.display = 'none'; return; }
-    tip.textContent = us.map((u) => u.original.map((n) => (n.nodeType === 8 ? '' : n.textContent)).join('')
+    tip.textContent = (us.some((u) => u.hq) ? '［高品質モデルで再翻訳済み］\n' : '') + us.map((u) => u.original.map((n) => (n.nodeType === 8 ? '' : n.textContent)).join('')
       .replace(/\s+/g, ' ').trim()).join('\n');
     tip.style.display = 'block';
     const r = tip.getBoundingClientRect();
@@ -295,10 +404,12 @@
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'retranslate') { retranslateAtCursor(); sendResponse(true); return; }
     if (msg.type !== 'toggle') return;
     settings = { target: msg.target || 'ja', hover: msg.hover !== false, engine: msg.engine || 'azure' };
     if (!active) { activate(); mode = 'translated'; }
     else mode = mode === 'translated' ? 'original' : 'translated';
+    if (mode === 'translated') retryFailed();
     units.forEach((u) => show(u, mode));
     if (mode === 'original') tip.style.display = 'none';
     sendResponse(mode);

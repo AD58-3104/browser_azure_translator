@@ -29,6 +29,7 @@
   #status { font-size:.9rem; }
   #status.ok { color: var(--ok); } #status.ng { color: var(--ng); }
   .usage { margin-top: 2.5rem; padding-top: 1rem; border-top:1px solid var(--line); color: var(--sub); font-size:.9rem; }
+  h2 { font-size:1rem; margin:2.25rem 0 0; padding-top:1.25rem; border-top:1px solid var(--line); }
   fieldset { border:0; padding:0; margin:1.25rem 0 0; }
   legend { font-weight:600; padding:0; }
   fieldset .check { margin-top:.4rem; }
@@ -41,7 +42,7 @@
 <body>
 <main>
   <h1>原文⇄翻訳トグル</h1>
-  <p class="lead">Alt+T（またはツールバーのボタン）で翻訳し、もう一度押すと原文に戻ります。ショートカットは edge://extensions/shortcuts で変更できます。</p>
+  <p class="lead">Alt+T（またはツールバーのボタン）で翻訳し、もう一度押すと原文に戻ります。訳文表示中は Ctrl+ホバーで原文を確認、Alt+R でマウスの下の段落を高品質モデルで再翻訳できます。ショートカットは edge://extensions/shortcuts で変更できます。</p>
 
   <fieldset>
     <legend>翻訳エンジン</legend>
@@ -62,12 +63,20 @@
   </section>
 
   <section id="ollama-settings">
+    <h2>Ollama（ローカルモデル）</h2>
     <label for="ollamaUrl">Ollama の URL</label>
     <input id="ollamaUrl" type="text" spellcheck="false" placeholder="http://localhost:11434">
 
-    <label for="ollamaModel">モデル名
-      <span class="hint">ollama list に表示される名前（例: translategemma:4b）</span></label>
-    <input id="ollamaModel" type="text" spellcheck="false" placeholder="translategemma:4b">
+    <div id="ollama-main">
+      <label for="ollamaModel">通常の翻訳に使うモデル
+        <span class="hint">ollama list に表示される名前（例: translategemma:4b）</span></label>
+      <input id="ollamaModel" type="text" spellcheck="false" placeholder="translategemma:4b">
+    </div>
+
+    <label for="ollamaModelHQ">再翻訳に使う高品質モデル
+      <span class="hint">訳が怪しい段落にマウスを乗せて Alt+R を押すと、その段落だけこのモデルで訳し直します。Azure 使用時も利用できます</span></label>
+    <input id="ollamaModelHQ" type="text" spellcheck="false" placeholder="translategemma:12b">
+
     <p class="hint note">事前に環境変数 <code>OLLAMA_ORIGINS=chrome-extension://*</code> を設定して Ollama を起動してください。詳しくは README を参照。</p>
   </section>
 
@@ -86,6 +95,7 @@
   <div class="row">
     <button id="save">保存</button>
     <button id="test" class="plain">接続テスト</button>
+    <button id="testHQ" class="plain">再翻訳モデルをテスト</button>
     <span id="status" role="status"></span>
   </div>
 
