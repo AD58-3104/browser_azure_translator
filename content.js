@@ -23,7 +23,7 @@
 
   let active = false;
   let mode = 'original';
-  let settings = { target: 'ja', hover: true };
+  let settings = { target: 'ja', hover: true, engine: 'azure' };
 
   const isNoTranslate = (el) => el.getAttribute('translate') === 'no' || el.classList.contains('notranslate');
   const isInline = (el) => INLINE.has(el.localName) || OPAQUE.has(el.localName);
@@ -104,7 +104,9 @@
       while (queue.length) {
         const batch = [];
         let chars = 0;
-        while (queue.length && batch.length < 100) {
+        // ローカル推論は1段落ずつ送り、訳せたものから順に表示する
+        const maxItems = settings.engine === 'ollama' ? 1 : 100;
+        while (queue.length && batch.length < maxItems) {
           const len = queue[0].payload.html.length;
           if (batch.length && chars + len > MAX_BATCH_CHARS) break;
           batch.push(queue.shift());
@@ -294,7 +296,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type !== 'toggle') return;
-    settings = { target: msg.target || 'ja', hover: msg.hover !== false };
+    settings = { target: msg.target || 'ja', hover: msg.hover !== false, engine: msg.engine || 'azure' };
     if (!active) { activate(); mode = 'translated'; }
     else mode = mode === 'translated' ? 'original' : 'translated';
     units.forEach((u) => show(u, mode));

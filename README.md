@@ -1,6 +1,6 @@
-# 原文⇄翻訳トグル (Azure Translator)
+# 原文⇄翻訳トグル
 
-Webページを Azure Translator で翻訳し、ショートカット一つで **原文と訳文を瞬時に切り替える** Microsoft Edge / Chrome 向け拡張機能です。
+Webページを Azure Translator またはローカルの LLM（Ollama）で翻訳し、ショートカット一つで **原文と訳文を瞬時に切り替える** Microsoft Edge / Chrome 向け拡張機能です。
 
 ブラウザ標準の翻訳は、原文を確認したいときに毎回メニューを開く必要があります。この拡張機能は原文と訳文の両方を保持しているので、「訳がおかしい」と思ったらキーを押して原文を確認し、もう一度押せば訳文に戻れます。
 
@@ -11,13 +11,16 @@ Webページを Azure Translator で翻訳し、ショートカット一つで *
 - 段落単位でリンクや太字などのタグ構造ごと翻訳するため、文脈が途切れにくい
 - `<code>` などのコード部分、`translate="no"` / `notranslate` 指定の要素は翻訳しない
 - 画面付近の要素だけを翻訳し、スクロールに合わせて追加で翻訳（無料枠の節約）
-- 今月の送信文字数をオプション画面に表示
+- Azure 使用時は今月の送信文字数をオプション画面に表示
+- 翻訳エンジンを Azure Translator / Ollama（ローカル）から選択可能
 - ツールバーのバッジで状態を表示（訳：翻訳表示中 / 原：原文表示中 / !：エラー）
 
 ## 動作環境
 
 - Microsoft Edge（Chromium版）または Google Chrome
-- Azure Translator のリソースとキー（無料枠 F0 で月 200 万文字まで無料）
+- 次のどちらか
+  - Azure Translator のリソースとキー（無料枠 F0 で月 200 万文字まで無料）
+  - [Ollama](https://ollama.com/) と翻訳用モデル（完全無料・オフライン）
 
 ## インストール
 
@@ -43,14 +46,49 @@ Webページを Azure Translator で翻訳し、ショートカット一つで *
 > **リージョン制限のエラーが出る場合**
 > `RequestDisallowedByAzure` が出たら、サブスクリプションにリージョン制限のポリシーがかかっています。ポータルの「ポリシー」→「割り当て」で許可リージョンを確認し、その中から選んで作成し直してください。
 
+## Ollama（ローカル推論）の準備
+
+1. [Ollama](https://ollama.com/download) をインストールします。
+2. 翻訳用のモデルをダウンロードします。
+
+   ```sh
+   ollama pull translategemma:4b
+   ```
+
+3. 拡張機能からのアクセスを許可するため、環境変数 `OLLAMA_ORIGINS` を設定して Ollama を起動し直します。設定しないと 403 エラーになります。
+
+   **Windows**（設定後、タスクトレイの Ollama を終了して起動し直す）
+   ```bat
+   setx OLLAMA_ORIGINS "chrome-extension://*"
+   ```
+
+   **macOS**（設定後、Ollama アプリを終了して起動し直す）
+   ```sh
+   launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"
+   ```
+
+   **Linux（systemd）**
+   ```sh
+   sudo systemctl edit ollama.service
+   # [Service] の下に Environment="OLLAMA_ORIGINS=chrome-extension://*" を追加
+   sudo systemctl restart ollama
+   ```
+
+4. オプション画面で「Ollama（ローカル）」を選び、モデル名を入力して「接続テスト」を押します。
+
+ローカル推論では段落を 1 つずつ翻訳し、訳せたものから順に表示します。CPU のみの環境では 1 段落に数秒かかることがあります。小型モデルがリンクや太字のタグ構造を崩した場合は、その段落をテキストのみで訳し直します（その段落のリンクは訳文表示中は失われます）。
+
 ## 設定
 
 ツールバーのボタンを右クリック →「拡張機能のオプション」で設定画面を開きます。
 
 | 項目 | 内容 |
 | --- | --- |
-| キー | Azure Translator の KEY 1 または KEY 2 |
-| リージョン | リソースの場所（例: `koreacentral`）。Global で作った場合は空欄 |
+| 翻訳エンジン | Azure Translator / Ollama（ローカル） |
+| キー（Azure） | Azure Translator の KEY 1 または KEY 2 |
+| リージョン（Azure） | リソースの場所（例: `koreacentral`）。Global で作った場合は空欄 |
+| Ollama の URL | 既定は `http://localhost:11434` |
+| モデル名 | `ollama list` に表示される名前（例: `translategemma:4b`） |
 | 翻訳先の言語 | 既定は日本語 |
 | 原文ツールチップ | Ctrl + ホバーで原文を表示するかどうか |
 
@@ -62,18 +100,18 @@ Webページを Azure Translator で翻訳し、ショートカット一つで *
 - React などで作られたページで、訳文表示中にページ側が内容を書き換えた箇所は、切り替えの対象から外れます。表示が崩れた場合はリロードしてください。
 - iframe 内の文章は翻訳しません。
 - `edge://` などのブラウザ内部ページや拡張機能ストアでは動作しません。
-- 送信文字数はタグを含めた目安で、Azure 側の課金カウントと完全には一致しません。
+- Azure の送信文字数はタグを含めた目安で、Azure 側の課金カウントと完全には一致しません。
 
 ## プライバシー
 
-- 翻訳対象のページのテキストは Azure Translator（`api.cognitive.microsofttranslator.com`）に送信されます。それ以外の外部サービスには送信しません。
+- Azure 使用時、翻訳対象のページのテキストは Azure Translator（`api.cognitive.microsofttranslator.com`）に送信されます。Ollama 使用時は手元の PC の外には送信されません。
 - API キーはブラウザの拡張機能ストレージ（`chrome.storage.local`）にのみ保存され、コードやリポジトリには含まれません。
 
 ## ファイル構成
 
 ```
 manifest.json   拡張機能の定義（Manifest V3）
-background.js   ショートカット・ボタンの処理と Azure API の呼び出し
+background.js   ショートカット・ボタンの処理と翻訳エンジン（Azure / Ollama）の呼び出し
 content.js      ページの走査、原文⇄訳文の差し替え、ツールチップ
 options.html    設定画面
 options.js      設定画面の処理

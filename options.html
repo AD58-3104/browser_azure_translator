@@ -29,6 +29,12 @@
   #status { font-size:.9rem; }
   #status.ok { color: var(--ok); } #status.ng { color: var(--ng); }
   .usage { margin-top: 2.5rem; padding-top: 1rem; border-top:1px solid var(--line); color: var(--sub); font-size:.9rem; }
+  fieldset { border:0; padding:0; margin:1.25rem 0 0; }
+  legend { font-weight:600; padding:0; }
+  fieldset .check { margin-top:.4rem; }
+  .note { margin:.75rem 0 0; }
+  code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size:.85em; }
+  [hidden] { display:none !important; }
   .usage strong { color: var(--ink); font-size: 1.1rem; }
 </style>
 </head>
@@ -37,13 +43,33 @@
   <h1>原文⇄翻訳トグル</h1>
   <p class="lead">Alt+T（またはツールバーのボタン）で翻訳し、もう一度押すと原文に戻ります。ショートカットは edge://extensions/shortcuts で変更できます。</p>
 
-  <label for="apiKey">Azure Translator のキー
-    <span class="hint">「キーとエンドポイント」にある KEY 1 または KEY 2</span></label>
-  <input id="apiKey" type="password" autocomplete="off" spellcheck="false">
+  <fieldset>
+    <legend>翻訳エンジン</legend>
+    <label class="check"><input type="radio" name="engine" value="azure">
+      <span>Azure Translator<span class="hint">　高速・高品質。無料枠は月 200 万文字</span></span></label>
+    <label class="check"><input type="radio" name="engine" value="ollama">
+      <span>Ollama（ローカル）<span class="hint">　無料・オフライン。PC の性能次第で遅くなります</span></span></label>
+  </fieldset>
 
-  <label for="region">リージョン
-    <span class="hint">例: japaneast。リソースを Global で作った場合は空欄</span></label>
-  <input id="region" type="text" spellcheck="false" placeholder="japaneast">
+  <section id="azure-settings">
+    <label for="apiKey">Azure Translator のキー
+      <span class="hint">「キーとエンドポイント」にある KEY 1 または KEY 2</span></label>
+    <input id="apiKey" type="password" autocomplete="off" spellcheck="false">
+
+    <label for="region">リージョン
+      <span class="hint">例: koreacentral。リソースを Global で作った場合は空欄</span></label>
+    <input id="region" type="text" spellcheck="false" placeholder="koreacentral">
+  </section>
+
+  <section id="ollama-settings">
+    <label for="ollamaUrl">Ollama の URL</label>
+    <input id="ollamaUrl" type="text" spellcheck="false" placeholder="http://localhost:11434">
+
+    <label for="ollamaModel">モデル名
+      <span class="hint">ollama list に表示される名前（例: translategemma:4b）</span></label>
+    <input id="ollamaModel" type="text" spellcheck="false" placeholder="translategemma:4b">
+    <p class="hint note">事前に環境変数 <code>OLLAMA_ORIGINS=chrome-extension://*</code> を設定して Ollama を起動してください。詳しくは README を参照。</p>
+  </section>
 
   <label for="target">翻訳先の言語</label>
   <select id="target">
@@ -63,7 +89,7 @@
     <span id="status" role="status"></span>
   </div>
 
-  <p class="usage">今月送信した文字数（目安）<br><strong id="usage">–</strong>
+  <p class="usage" id="usage-block">今月送信した文字数（目安）<br><strong id="usage">–</strong>
     <span> / 無料枠 F0 は月 2,000,000 文字</span></p>
 </main>
 <script src="options.js"></script>
