@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "原文⇄翻訳トグル (Azure Translator)",
+  "version": "1.0.0",
+  "description": "ページを Azure Translator で翻訳し、ショートカット一つで原文と訳文を瞬時に切り替えます。",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://api.cognitive.microsofttranslator.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "翻訳 / 原文を切り替え (Alt+T)" },
+  "commands": {
+    "toggle-translation": {
+      "suggested_key": { "default": "Alt+T" },
+      "description": "翻訳と原文を切り替え"
+    }
+  },
+  "options_ui": { "page": "options.html", "open_in_tab": true }
+}

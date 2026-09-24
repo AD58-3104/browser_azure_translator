@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原文⇄翻訳トグル 設定</title>
+<style>
+  :root { --ink:#1b2430; --sub:#5b6675; --line:#d7dde4; --bg:#f7f9fb; --accent:#1f5fbf; --ok:#15803d; --ng:#b91c1c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#e6ebf1; --sub:#9aa6b4; --line:#334050; --bg:#141a21; --accent:#6aa3ff; --ok:#4ade80; --ng:#f87171; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font: 15px/1.75 "Hiragino Sans","Yu Gothic UI","Noto Sans JP",system-ui,sans-serif; }
+  main { max-width: 36rem; margin: 3rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.35rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .lead { color: var(--sub); margin: 0 0 2rem; }
+  label { display:block; font-weight:600; margin-top:1.25rem; }
+  .hint { color: var(--sub); font-size: .85rem; font-weight: 400; }
+  input[type=text], input[type=password], select { width:100%; margin-top:.35rem; padding:.55rem .7rem;
+    font: inherit; color: inherit; background: transparent; border:1px solid var(--line); border-radius:4px; }
+  input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .check { display:flex; gap:.6rem; align-items:flex-start; font-weight:400; }
+  .check input { margin-top:.45rem; }
+  .row { display:flex; gap:.75rem; margin-top:2rem; align-items:center; flex-wrap:wrap; }
+  button { font: inherit; padding:.5rem 1.1rem; border-radius:4px; cursor:pointer;
+    border:1px solid var(--accent); background: var(--accent); color:#fff; }
+  button.plain { background: transparent; color: var(--accent); }
+  #status { font-size:.9rem; }
+  #status.ok { color: var(--ok); } #status.ng { color: var(--ng); }
+  .usage { margin-top: 2.5rem; padding-top: 1rem; border-top:1px solid var(--line); color: var(--sub); font-size:.9rem; }
+  .usage strong { color: var(--ink); font-size: 1.1rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>原文⇄翻訳トグル</h1>
+  <p class="lead">Alt+T（またはツールバーのボタン）で翻訳し、もう一度押すと原文に戻ります。ショートカットは edge://extensions/shortcuts で変更できます。</p>
+
+  <label for="apiKey">Azure Translator のキー
+    <span class="hint">「キーとエンドポイント」にある KEY 1 または KEY 2</span></label>
+  <input id="apiKey" type="password" autocomplete="off" spellcheck="false">
+
+  <label for="region">リージョン
+    <span class="hint">例: japaneast。リソースを Global で作った場合は空欄</span></label>
+  <input id="region" type="text" spellcheck="false" placeholder="japaneast">
+
+  <label for="target">翻訳先の言語</label>
+  <select id="target">
+    <option value="ja">日本語</option>
+    <option value="en">英語</option>
+    <option value="zh-Hans">中国語（簡体字）</option>
+    <option value="zh-Hant">中国語（繁体字）</option>
+    <option value="ko">韓国語</option>
+  </select>
+
+  <label class="check"><input id="hover" type="checkbox">
+    <span>Ctrl を押しながらマウスを乗せると、その部分の原文を表示する</span></label>
+
+  <div class="row">
+    <button id="save">保存</button>
+    <button id="test" class="plain">接続テスト</button>
+    <span id="status" role="status"></span>
+  </div>
+
+  <p class="usage">今月送信した文字数（目安）<br><strong id="usage">–</strong>
+    <span> / 無料枠 F0 は月 2,000,000 文字</span></p>
+</main>
+<script src="options.js"></script>
+</body>
+</html>
