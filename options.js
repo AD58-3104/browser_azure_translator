@@ -40,7 +40,6 @@ function updateVisibility() {
   const e = engine();
   $('azure-settings').hidden = e !== 'azure';
   $('usage-block').hidden = e !== 'azure';
-  $('ollama-main').hidden = e !== 'ollama';
 }
 
 async function load() {
@@ -77,7 +76,7 @@ async function save() {
 document.querySelectorAll('input[name=engine]').forEach((r) => r.addEventListener('change', updateVisibility));
 $('save').addEventListener('click', save);
 $('test').addEventListener('click', () => runTest('translate', '翻訳エンジン',
-  engine() === 'ollama' ? 'テスト中…初回はモデルの読み込みに時間がかかります' : 'テスト中…'));
+  engine().startsWith('ollama') ? 'テスト中…初回はモデルの読み込みに時間がかかります' : 'テスト中…'));
 $('testHQ').addEventListener('click', () => runTest('translateHQ', '再翻訳モデル',
   'テスト中…初回はモデルの読み込みに時間がかかります'));
 load();

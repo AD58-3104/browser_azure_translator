@@ -101,13 +101,13 @@
   }
 
   // offscreen の翻訳処理を呼ぶ。通信自体の失敗（拡張機能側の再起動など）は数回まで再試行
-  async function callTranslator(type, texts) {
+  async function callTranslator(type, texts, extra = {}) {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         // offscreen を使えればそちらで、使えなければ Service Worker で直接翻訳する
         const off = await chrome.runtime.sendMessage({ type: 'ensureOffscreen' });
         const to = off && off.ok ? 'offscreen' : 'background';
-        const res = await chrome.runtime.sendMessage({ type, texts, to });
+        const res = await chrome.runtime.sendMessage({ type, texts, to, ...extra });
         if (res) return res;
       } catch (e) {
         if (/context invalidated/i.test(e.message)) {
@@ -127,7 +127,7 @@
         const batch = [];
         let chars = 0;
         // ローカル推論は1段落ずつ送り、訳せたものから順に表示する
-        const maxItems = settings.engine === 'ollama' ? 1 : 100;
+        const maxItems = settings.engine.startsWith('ollama') ? 1 : 100;
         while (queue.length && batch.length < maxItems) {
           const len = queue[0].payload.html.length;
           if (batch.length && chars + len > MAX_BATCH_CHARS) break;
@@ -326,10 +326,10 @@
     div.style.top = r.top + scrollY - pad + 'px';
     return r;
   }
-  function showBusy(el) {
+  function showBusy(el, label) {
     const d = document.createElement('div');
     d.className = 'busy';
-    d.textContent = '高品質モデルで再翻訳中…';
+    d.textContent = `${label} で再翻訳中…`;
     shadow.appendChild(d);
     placeAt(d, el);
     d.style.top = Math.max(0, parseFloat(d.style.top) - 24) + 'px';
@@ -345,29 +345,37 @@
     setTimeout(() => d.remove(), 1800);
   }
 
-  // ---------- 高品質モデルでの段落再翻訳 ----------
-  async function retranslateAtCursor() {
+  // ---------- マウスの下の段落を再翻訳 ----------
+  // which: 'hq'（高品質モデル）| 'light'（通常モデル）, model: 表示用のモデル名
+  async function retranslateAtCursor(which, model, engine) {
     if (!active || mode !== 'translated' || !lastMouse) return;
     const el = document.elementFromPoint(lastMouse.clientX, lastMouse.clientY);
-    const us = (el ? unitsAt(el) : []).filter((u) => u.ready && !u.dead && !u.hqPending);
+    const us = (el ? unitsAt(el) : []).filter((u) => u.ready && !u.dead && !u.rePending);
     if (!us.length) { showToast('再翻訳したい段落の上にマウスを置いてから押してください。'); return; }
+    // いまの訳と同じモデルで訳し直す場合は、別の訳が出るよう揺らぎを入れる
+    const initialSource = { ollama: 'light', ollamaHQ: 'hq' }[engine]; // ページ翻訳に使ったモデル
+    const sameModel = (u) => (u.source || initialSource) === which;
+    const vary = us.some(sameModel);
+    const label = model || (which === 'hq' ? '高品質モデル' : '通常モデル');
     const anchor = us[0].parent;
-    const busy = showBusy(anchor);
-    us.forEach((u) => { u.hqPending = true; });
+    const busy = showBusy(anchor, label);
+    us.forEach((u) => { u.rePending = true; });
     try {
-      const res = await callTranslator('translateHQ', us.map((u) => u.payload.html));
+      const type = which === 'hq' ? 'translateHQ' : 'translateLight';
+      const res = await callTranslator(type, us.map((u) => u.payload.html), { vary });
       if (!res.ok) { showError(res.error); return; }
       res.translations.forEach((html, i) => {
         const u = us[i];
         if (u.state === 'translated') show(u, 'original'); // 旧訳を外してから差し替え
         if (u.dead) return;
         applyTranslation(u, html);
-        u.hq = true;
+        u.source = which;
+        u.sourceLabel = label;
       });
       if (anchor.isConnected) flash(anchor);
     } finally {
       busy.remove();
-      us.forEach((u) => { u.hqPending = false; });
+      us.forEach((u) => { u.rePending = false; });
     }
   }
 
@@ -385,7 +393,8 @@
     const el = document.elementFromPoint(x, y);
     const us = el ? unitsAt(el) : [];
     if (!us.length) { tip.style.display = 'none'; return; }
-    tip.textContent = (us.some((u) => u.hq) ? '［高品質モデルで再翻訳済み］\n' : '') + us.map((u) => u.original.map((n) => (n.nodeType === 8 ? '' : n.textContent)).join('')
+    const labels = [...new Set(us.filter((u) => u.sourceLabel).map((u) => u.sourceLabel))];
+    tip.textContent = (labels.length ? `［${labels.join('・')} で再翻訳済み］\n` : '') + us.map((u) => u.original.map((n) => (n.nodeType === 8 ? '' : n.textContent)).join('')
       .replace(/\s+/g, ' ').trim()).join('\n');
     tip.style.display = 'block';
     const r = tip.getBoundingClientRect();
@@ -406,7 +415,7 @@
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg.type === 'retranslate') { retranslateAtCursor(); sendResponse(true); return; }
+    if (msg.type === 'retranslate') { retranslateAtCursor(msg.which, msg.model, msg.engine); sendResponse(true); return; }
     if (msg.type !== 'toggle') return;
     settings = { target: msg.target || 'ja', hover: msg.hover !== false, engine: msg.engine || 'azure' };
     if (!active) { activate(); mode = 'translated'; }

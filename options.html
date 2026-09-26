@@ -42,14 +42,16 @@
 <body>
 <main>
   <h1>原文⇄翻訳トグル</h1>
-  <p class="lead">Alt+T（またはツールバーのボタン）で翻訳し、もう一度押すと原文に戻ります。訳文表示中は Ctrl+ホバーで原文を確認、Alt+R でマウスの下の段落を高品質モデルで再翻訳できます。ショートカットは edge://extensions/shortcuts で変更できます。</p>
+  <p class="lead">Alt+T（またはツールバーのボタン）で翻訳し、もう一度押すと原文に戻ります。訳文表示中は Ctrl+ホバーで原文を確認、Alt+R でマウスの下の段落を高品質モデルで、Alt+Shift+R で通常モデルで再翻訳できます。ショートカットは edge://extensions/shortcuts で変更できます。</p>
 
   <fieldset>
     <legend>翻訳エンジン</legend>
     <label class="check"><input type="radio" name="engine" value="azure">
       <span>Azure Translator<span class="hint">　高速・高品質。無料枠は月 200 万文字</span></span></label>
     <label class="check"><input type="radio" name="engine" value="ollama">
-      <span>Ollama（ローカル）<span class="hint">　無料・オフライン。PC の性能次第で遅くなります</span></span></label>
+      <span>Ollama・通常モデル<span class="hint">　無料・オフライン。PC の性能次第で遅くなります</span></span></label>
+    <label class="check"><input type="radio" name="engine" value="ollamaHQ">
+      <span>Ollama・高品質モデル<span class="hint">　ページ全体を高品質モデルで翻訳。品質重視で、通常モデルよりかなり時間がかかります</span></span></label>
   </fieldset>
 
   <section id="azure-settings">
@@ -69,12 +71,12 @@
 
     <div id="ollama-main">
       <label for="ollamaModel">通常の翻訳に使うモデル
-        <span class="hint">ollama list に表示される名前（例: translategemma:4b）</span></label>
+        <span class="hint">ollama list に表示される名前（例: translategemma:4b）。「Ollama・通常モデル」でのページ翻訳と、Alt+Shift+R での段落再翻訳に使います</span></label>
       <input id="ollamaModel" type="text" spellcheck="false" placeholder="translategemma:4b">
     </div>
 
     <label for="ollamaModelHQ">再翻訳に使う高品質モデル
-      <span class="hint">訳が怪しい段落にマウスを乗せて Alt+R を押すと、その段落だけこのモデルで訳し直します。Azure 使用時も利用できます</span></label>
+      <span class="hint">「Ollama・高品質モデル」でのページ翻訳と、Alt+R での段落再翻訳に使います</span></label>
     <input id="ollamaModelHQ" type="text" spellcheck="false" placeholder="translategemma:12b">
 
     <label for="ollamaNumCtx">コンテキスト長

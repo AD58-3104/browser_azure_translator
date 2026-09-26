@@ -3,7 +3,7 @@
 // offscreen を作れない環境では、ここで直接実行する（予備経路）。
 importScripts('translator.js');
 const DEFAULTS = {
-  engine: 'azure',               // 'azure' | 'ollama'
+  engine: 'azure',               // 'azure' | 'ollama'（通常モデル） | 'ollamaHQ'（高品質モデル）
   apiKey: '', region: '',
   ollamaUrl: 'http://localhost:11434', ollamaModel: 'translategemma:4b',
   ollamaModelHQ: 'translategemma:12b', // 段落単位の再翻訳用
@@ -17,7 +17,7 @@ chrome.action.onClicked.addListener((tab) => toggleTab(tab));
 chrome.commands.onCommand.addListener((cmd, tab) => {
   if (cmd === 'toggle-translation') toggleTab(tab);
   // 翻訳済みのページでだけ動く（未翻訳のページには何もしない）
-  if (cmd === 'retranslate-hq' && tab?.id != null) chrome.tabs.sendMessage(tab.id, { type: 'retranslate' }).catch(() => {});
+  if ((cmd === 'retranslate-hq' || cmd === 'retranslate-light') && tab?.id != null) retranslate(tab.id, cmd === 'retranslate-hq' ? 'hq' : 'light');
 });
 
 async function toggleTab(tab) {
@@ -33,6 +33,12 @@ async function toggleTab(tab) {
     console.warn('toggle failed:', e);
     setBadge(tab.id, 'error');
   }
+}
+
+async function retranslate(tabId, which) {
+  const s = await getSettings();
+  const model = which === 'hq' ? s.ollamaModelHQ : s.ollamaModel;
+  chrome.tabs.sendMessage(tabId, { type: 'retranslate', which, model, engine: s.engine }).catch(() => {});
 }
 
 let creating = null;
@@ -102,6 +108,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     case 'translate':
     case 'translateHQ':
+    case 'translateLight':
       if (msg.to !== 'background') return; // offscreen 宛てのものは無視
       translateHere(msg).then(sendResponse);
       return true;

@@ -3,7 +3,7 @@
 // 強制終了されるため、時間のかかる推論や 429 の待機はこちらで行う。
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.to !== 'offscreen') return;
-  if (msg.type !== 'translate' && msg.type !== 'translateHQ') return;
+  if (!['translate', 'translateHQ', 'translateLight'].includes(msg.type)) return;
   (async () => {
     const s = await chrome.runtime.sendMessage({ type: 'getSettings' });
     if (!s) return { ok: false, fatal: false, error: '設定を読み込めませんでした。' };

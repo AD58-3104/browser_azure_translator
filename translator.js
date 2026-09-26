@@ -10,13 +10,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 設定の誤りなど、再試行しても直らないエラー
 class FatalError extends Error {}
 
-// msg: { type: 'translate' | 'translateHQ', texts }, s: 設定, onUsage: Azure の送信文字数を記録する関数
+// msg: { type: 'translate' | 'translateHQ' | 'translateLight', texts, vary }
+// s: 設定, onUsage: Azure の送信文字数を記録する関数
+// vary: 同じモデルで訳し直すとき true。temperature 0 だと毎回同じ訳になるため、少し揺らす
 async function runTranslation(msg, s, onUsage) {
+  const temperature = msg.vary ? 0.7 : 0;
   if (msg.type === 'translateHQ') {
-    if (!s.ollamaModelHQ) throw new FatalError('再翻訳用のモデルが未設定です。');
+    if (!s.ollamaModelHQ) throw new FatalError('再翻訳用の高品質モデルが未設定です。');
+    return translateOllama(msg.texts, { ...s, ollamaModel: s.ollamaModelHQ, temperature });
+  }
+  if (msg.type === 'translateLight') {
+    if (!s.ollamaModel) throw new FatalError('通常の翻訳に使うモデルが未設定です。');
+    return translateOllama(msg.texts, { ...s, temperature });
+  }
+  if (s.engine === 'ollama') return translateOllama(msg.texts, s);
+  if (s.engine === 'ollamaHQ') {
+    if (!s.ollamaModelHQ) throw new FatalError('高品質モデルが未設定です。');
     return translateOllama(msg.texts, { ...s, ollamaModel: s.ollamaModelHQ });
   }
-  return s.engine === 'ollama' ? translateOllama(msg.texts, s) : translateAzure(msg.texts, s, onUsage);
+  return translateAzure(msg.texts, s, onUsage);
 }
 
 // 結果を { ok, translations } / { ok: false, fatal, error } の形にそろえる
@@ -88,7 +100,7 @@ function cleanOutput(s) {
     .trim();
 }
 
-async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx }) {
+async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temperature = 0 }) {
   // 生成の途中で止まった場合にも備え、読み終わるまでを含めてタイムアウトを掛ける
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), OLLAMA_TIMEOUT_MS);
@@ -106,7 +118,7 @@ async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx }) {
           keep_alive: '15m',
           // コンテキスト長は、指定があるときだけ送る（未指定なら Ollama 側の既定値に従う）。
           // 値が他のクライアントと食い違うと、そのたびにモデルが読み込み直されて遅くなる
-          options: { temperature: 0, ...(Number(ollamaNumCtx) > 0 ? { num_ctx: Number(ollamaNumCtx) } : {}) },
+          options: { temperature, ...(Number(ollamaNumCtx) > 0 ? { num_ctx: Number(ollamaNumCtx) } : {}) },
         }),
       });
     } catch (e) {
