@@ -1,10 +1,13 @@
 // ショートカット・ボタン・バッジ・設定の管理を担当。
 // 翻訳 API の呼び出しは、Service Worker の寿命制限を受けない offscreen.js で行う。
+// offscreen を作れない環境では、ここで直接実行する（予備経路）。
+importScripts('translator.js');
 const DEFAULTS = {
   engine: 'azure',               // 'azure' | 'ollama'
   apiKey: '', region: '',
   ollamaUrl: 'http://localhost:11434', ollamaModel: 'translategemma:4b',
   ollamaModelHQ: 'translategemma:12b', // 段落単位の再翻訳用
+  ollamaNumCtx: '',                    // 空なら Ollama の既定値
   target: 'ja', hover: true,
 };
 
@@ -20,7 +23,7 @@ chrome.commands.onCommand.addListener((cmd, tab) => {
 async function toggleTab(tab) {
   if (!tab || tab.id == null) return;
   try {
-    await ensureOffscreen();
+    await ensureOffscreen().catch((e) => { offscreenError = String(e.message || e); });
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
     const { target, hover, engine } = await getSettings();
     const state = await chrome.tabs.sendMessage(tab.id, { type: 'toggle', target, hover, engine });
@@ -33,15 +36,39 @@ async function toggleTab(tab) {
 }
 
 let creating = null;
+let offscreenError = null; // 作成に失敗した理由（診断用）
+
+async function hasOffscreen() {
+  if (chrome.runtime.getContexts) {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+    return contexts.length > 0;
+  }
+  return chrome.offscreen.hasDocument ? chrome.offscreen.hasDocument() : false;
+}
+
 async function ensureOffscreen() {
-  const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
-  if (contexts.length) return;
+  if (!chrome.offscreen) throw new Error('このブラウザでは offscreen API が使えません');
+  if (await hasOffscreen()) return;
   creating ??= chrome.offscreen.createDocument({
     url: 'offscreen.html',
     reasons: ['DOM_PARSER'],
     justification: 'Run long translation requests and process translated HTML fragments outside the service worker.',
+  }).catch((e) => {
+    // 別の呼び出しがすでに作成済みなら成功扱い
+    if (/single offscreen/i.test(String(e.message))) return;
+    throw e;
   }).finally(() => { creating = null; });
   await creating;
+}
+
+// 予備経路：Service Worker 内で直接翻訳する。待機中も定期的に API を呼んで停止されないようにする
+async function translateHere(msg) {
+  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(), 20_000);
+  try {
+    return await runTranslationSafe(msg, await getSettings(), addUsage);
+  } finally {
+    clearInterval(keepAlive);
+  }
 }
 
 function setBadge(tabId, state) {
@@ -65,9 +92,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     case 'ensureOffscreen':
       ensureOffscreen().then(
-        () => sendResponse(true),
-        (e) => { console.warn(e); sendResponse(false); }
+        () => { offscreenError = null; sendResponse({ ok: true }); },
+        (e) => {
+          offscreenError = String(e.message || e);
+          console.warn('[translate-toggle] offscreen を作成できません:', e);
+          sendResponse({ ok: false, error: offscreenError });
+        }
       );
+      return true;
+    case 'translate':
+    case 'translateHQ':
+      if (msg.to !== 'background') return; // offscreen 宛てのものは無視
+      translateHere(msg).then(sendResponse);
       return true;
     case 'getSettings':
       if (!isOffscreen(sender)) return; // APIキーは offscreen にだけ渡す

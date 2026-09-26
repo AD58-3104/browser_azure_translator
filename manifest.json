@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "原文⇄翻訳トグル",
-  "version": "1.3.0",
+  "version": "1.3.2",
   "description": "ページを Azure Translator またはローカルの Ollama で翻訳し、ショートカット一つで原文と訳文を瞬時に切り替えます。",
   "permissions": [
     "activeTab",

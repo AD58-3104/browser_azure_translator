@@ -17,7 +17,7 @@
   .lead { color: var(--sub); margin: 0 0 2rem; }
   label { display:block; font-weight:600; margin-top:1.25rem; }
   .hint { color: var(--sub); font-size: .85rem; font-weight: 400; }
-  input[type=text], input[type=password], select { width:100%; margin-top:.35rem; padding:.55rem .7rem;
+  input[type=text], input[type=password], input[type=number], select { width:100%; margin-top:.35rem; padding:.55rem .7rem;
     font: inherit; color: inherit; background: transparent; border:1px solid var(--line); border-radius:4px; }
   input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .check { display:flex; gap:.6rem; align-items:flex-start; font-weight:400; }
@@ -76,6 +76,10 @@
     <label for="ollamaModelHQ">再翻訳に使う高品質モデル
       <span class="hint">訳が怪しい段落にマウスを乗せて Alt+R を押すと、その段落だけこのモデルで訳し直します。Azure 使用時も利用できます</span></label>
     <input id="ollamaModelHQ" type="text" spellcheck="false" placeholder="translategemma:12b">
+
+    <label for="ollamaNumCtx">コンテキスト長
+      <span class="hint">空欄なら Ollama の既定値に従います（推奨）。ほかのアプリと違う値にすると、切り替えのたびにモデルの再読み込みが起きて遅くなります</span></label>
+    <input id="ollamaNumCtx" type="number" min="2048" step="1024" placeholder="Ollama の既定値">
 
     <p class="hint note">事前に環境変数 <code>OLLAMA_ORIGINS=chrome-extension://*</code> を設定して Ollama を起動してください。詳しくは README を参照。</p>
   </section>

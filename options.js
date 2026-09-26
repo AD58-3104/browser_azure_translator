@@ -1,13 +1,38 @@
 const DEFAULTS = {
   engine: 'azure', apiKey: '', region: '',
-  ollamaUrl: 'http://localhost:11434', ollamaModel: 'translategemma:4b', ollamaModelHQ: 'translategemma:12b',
+  ollamaUrl: 'http://localhost:11434', ollamaModel: 'translategemma:4b', ollamaModelHQ: 'translategemma:12b', ollamaNumCtx: '',
   target: 'ja', hover: true,
 };
 const $ = (id) => document.getElementById(id);
 const status = (text, cls = '') => { $('status').textContent = text; $('status').className = cls; };
+let route = '';
 async function callTranslator(type, texts) {
-  await chrome.runtime.sendMessage({ type: 'ensureOffscreen' });
-  return chrome.runtime.sendMessage({ type, texts, to: 'offscreen' });
+  const off = await chrome.runtime.sendMessage({ type: 'ensureOffscreen' });
+  const to = off && off.ok ? 'offscreen' : 'background';
+  route = to === 'offscreen' ? 'offscreen 経由' : `予備経路（offscreen 不可: ${off?.error || '不明'}）`;
+  const res = await chrome.runtime.sendMessage({ type, texts, to });
+  if (!res) throw new Error(`翻訳処理から応答がありません（${route}）`);
+  return res;
+}
+
+// 経過時間を表示しながらテストし、どんな失敗でも結果を画面に出す
+async function runTest(type, label, waitingText) {
+  await save();
+  const started = Date.now();
+  const tick = () => status(`${waitingText}（${Math.round((Date.now() - started) / 1000)} 秒経過）`);
+  tick();
+  const timer = setInterval(tick, 1000);
+  try {
+    const res = await callTranslator(type, ['Hello, world.']);
+    const sec = Math.round((Date.now() - started) / 1000);
+    if (res.ok) status(`${label}に接続できました（${sec} 秒、${route}）: 「${res.translations[0]}」`, 'ok');
+    else status(res.error === 'NO_KEY' ? 'キーを入力してください' : `接続できません: ${res.error}（${route}）`, 'ng');
+  } catch (e) {
+    status(`接続できません: ${e.message || e}`, 'ng');
+  } finally {
+    clearInterval(timer);
+    load();
+  }
 }
 const engine = () => document.querySelector('input[name=engine]:checked')?.value || 'azure';
 
@@ -26,6 +51,7 @@ async function load() {
   $('ollamaUrl').value = s.ollamaUrl;
   $('ollamaModel').value = s.ollamaModel;
   $('ollamaModelHQ').value = s.ollamaModelHQ;
+  $('ollamaNumCtx').value = s.ollamaNumCtx;
   $('target').value = s.target;
   $('hover').checked = s.hover;
   updateVisibility();
@@ -41,6 +67,7 @@ async function save() {
     ollamaUrl: $('ollamaUrl').value.trim() || DEFAULTS.ollamaUrl,
     ollamaModel: $('ollamaModel').value.trim(),
     ollamaModelHQ: $('ollamaModelHQ').value.trim(),
+    ollamaNumCtx: $('ollamaNumCtx').value.trim(),
     target: $('target').value,
     hover: $('hover').checked,
   });
@@ -49,19 +76,8 @@ async function save() {
 
 document.querySelectorAll('input[name=engine]').forEach((r) => r.addEventListener('change', updateVisibility));
 $('save').addEventListener('click', save);
-$('test').addEventListener('click', async () => {
-  await save();
-  status(engine() === 'ollama' ? 'テスト中…（初回はモデルの読み込みに時間がかかります）' : 'テスト中…');
-  const res = await callTranslator('translate', ['Hello, world.']);
-  if (res.ok) status(`接続できました: 「${res.translations[0]}」`, 'ok');
-  else status(res.error === 'NO_KEY' ? 'キーを入力してください' : `接続できません: ${res.error}`, 'ng');
-  load();
-});
-$('testHQ').addEventListener('click', async () => {
-  await save();
-  status('テスト中…（モデルの読み込みに時間がかかります）');
-  const res = await callTranslator('translateHQ', ['Hello, world.']);
-  if (res.ok) status(`再翻訳モデルに接続できました: 「${res.translations[0]}」`, 'ok');
-  else status(`接続できません: ${res.error}`, 'ng');
-});
+$('test').addEventListener('click', () => runTest('translate', '翻訳エンジン',
+  engine() === 'ollama' ? 'テスト中…初回はモデルの読み込みに時間がかかります' : 'テスト中…'));
+$('testHQ').addEventListener('click', () => runTest('translateHQ', '再翻訳モデル',
+  'テスト中…初回はモデルの読み込みに時間がかかります'));
 load();

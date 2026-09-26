@@ -104,8 +104,10 @@
   async function callTranslator(type, texts) {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await chrome.runtime.sendMessage({ type: 'ensureOffscreen' });
-        const res = await chrome.runtime.sendMessage({ type, texts, to: 'offscreen' });
+        // offscreen を使えればそちらで、使えなければ Service Worker で直接翻訳する
+        const off = await chrome.runtime.sendMessage({ type: 'ensureOffscreen' });
+        const to = off && off.ok ? 'offscreen' : 'background';
+        const res = await chrome.runtime.sendMessage({ type, texts, to });
         if (res) return res;
       } catch (e) {
         if (/context invalidated/i.test(e.message)) {
