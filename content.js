@@ -81,7 +81,15 @@
       (parentUnits.get(e.target) || []).forEach(enqueue);
     }
   }, { rootMargin: '100% 0px' });
-  const observeUnit = (u) => io.observe(u.parent);
+  // いま画面に見えている段落を記録し、翻訳の順番で優先する
+  const visible = new Set();
+  const vio = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) visible.add(e.target);
+      else visible.delete(e.target);
+    }
+  });
+  const observeUnit = (u) => { io.observe(u.parent); vio.observe(u.parent); };
 
   let queue = [];
   let flushing = false;
@@ -140,6 +148,8 @@
     flushing = true;
     try {
       while (queue.length) {
+        // 画面に見えている段落を先に翻訳する（スクロールで通り過ぎた段落が順番待ちをふさがないように）
+        queue.sort((a, b) => Number(visible.has(b.parent)) - Number(visible.has(a.parent)));
         const batch = [];
         let chars = 0;
         // ローカル推論は1段落ずつ送り、訳せたものから順に表示する

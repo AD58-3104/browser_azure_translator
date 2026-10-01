@@ -109,10 +109,25 @@ function cleanOutput(s) {
     .trim();
 }
 
-async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temperature = 0 }) {
+// 入力の長さから、出力トークン数の上限を決める。
+// 上限がないと、モデルが同じ語句を繰り返し続けたときにコンテキストが埋まるまで生成が止まらない
+const maxTokensFor = (text) => Math.min(4096, Math.max(256, Math.ceil(text.length / 2) + 128));
+
+// 生成の末尾が同じ断片の繰り返しになっていないか（暴走の検出）
+function isLooping(content) {
+  if (content.length < 300) return false;
+  const tail = content.slice(-30);
+  const recent = content.slice(-600);
+  return recent.split(tail).length - 1 >= 4;
+}
+
+// 戻り値: { text, truncated }。truncated は上限到達または繰り返しで打ち切ったことを示す
+async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temperature = 0 }, maxTokens = 1024) {
   // 生成の途中で止まった場合にも備え、読み終わるまでを含めてタイムアウトを掛ける
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), OLLAMA_TIMEOUT_MS);
+  let reason = null; // 'timeout' | 'loop'
+  const timer = setTimeout(() => { reason = 'timeout'; ctrl.abort(); }, OLLAMA_TIMEOUT_MS);
+  let content = '';
   try {
     let res;
     try {
@@ -123,11 +138,15 @@ async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temper
         body: JSON.stringify({
           model: ollamaModel,
           messages: [{ role: 'user', content: prompt }],
-          stream: true, // 生成しながら少しずつ受け取る（応答待ちで打ち切られにくくする）
+          stream: true, // 生成しながら少しずつ受け取る（応答待ちで打ち切られにくく、暴走も途中で検出できる）
           keep_alive: '15m',
           // コンテキスト長は、指定があるときだけ送る（未指定なら Ollama 側の既定値に従う）。
           // 値が他のクライアントと食い違うと、そのたびにモデルが読み込み直されて遅くなる
-          options: { temperature, ...(Number(ollamaNumCtx) > 0 ? { num_ctx: Number(ollamaNumCtx) } : {}) },
+          options: {
+            temperature,
+            num_predict: maxTokens,
+            ...(Number(ollamaNumCtx) > 0 ? { num_ctx: Number(ollamaNumCtx) } : {}),
+          },
         }),
       });
     } catch (e) {
@@ -141,7 +160,7 @@ async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temper
     // 改行区切りの JSON（NDJSON）を順に読み、生成されたテキストをつなげる
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buf = '', content = '';
+    let buf = '', truncated = false;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -154,10 +173,19 @@ async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temper
         const j = JSON.parse(line);
         if (j.error) throw new Error(`Ollama: ${j.error}`);
         content += j.message?.content ?? '';
+        if (j.done && j.done_reason === 'length') truncated = true;
+      }
+      if (isLooping(content)) {
+        // 接続を切ると Ollama 側の生成も止まる
+        reason = 'loop';
+        ctrl.abort();
+        break;
       }
     }
-    return cleanOutput(content);
+    if (reason === 'loop') console.warn('[translate-toggle] 同じ語句の繰り返しを検出したため生成を打ち切りました');
+    return { text: cleanOutput(content), truncated: truncated || reason === 'loop' };
   } catch (e) {
+    if (e.name === 'AbortError' && reason === 'loop') return { text: cleanOutput(content), truncated: true };
     if (e.name === 'AbortError') throw new Error(`Ollama の応答が ${OLLAMA_TIMEOUT_MS / 1000} 秒以内に終わりませんでした。`);
     throw e;
   } finally {
@@ -166,27 +194,17 @@ async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temper
 }
 
 // ---------- プロンプト ----------
-// TranslateGemma は学習時のプロンプト形式（原文の言語を明示する形）から外れると、
-// 指定と違う言語に訳したり説明文を付けたりしやすい。公式の形式どおりに組み立てる。
-function buildPrompt(text, src, tgt, model, isHtml) {
+// TranslateGemma 公式のプロンプト形式（原文の言語を明示する形）は、
+// 日本語以外に訳されることがあったため使わない。
+function buildPrompt(text, tgt, isHtml) {
   const T = langName(tgt);
-  if (/translategemma/i.test(model)) {
-    const sc = src || 'en'; // 推定できないときは英語とみなす（モデルは入力から言語を判断できることが多い）
-    const S = langName(sc);
-    return `You are a professional ${S} (${sc}) to ${T} (${tgt}) translator. Your goal is to accurately convey the meaning and nuances of the original ${S} text while adhering to ${T} grammar, vocabulary, and cultural sensitivities.
-Produce only the ${T} translation, without any additional explanations or commentary. Please translate the following ${S} text into ${T}:
-
-
-${text}`;
-  }
-  const from = src ? ` from ${langName(src)}` : '';
   if (isHtml) {
-    return `Translate the following HTML fragment${from} into ${T}. Output only the ${T} translation of the fragment, without any explanation.
+    return `Translate the following HTML fragment into ${T}. Output only the translated fragment, without any explanation.
 Keep every <span id="..."> tag with its exact attributes, and put each one around the words that correspond to its original content. Keep <br> tags. Do not translate text inside tags that have class="notranslate".
 
 ${text}`;
   }
-  return `Translate the following text${from} into ${T}. Output only the ${T} translation, without any explanation.
+  return `Translate the following text into ${T}. Output only the translation, without any explanation.
 
 ${text}`;
 }
@@ -234,16 +252,16 @@ async function translateOllama(texts, s, srcLangs = []) {
     let result = null;
     if (html.includes('<span')) {
       // タグ付きで翻訳。タグが崩れた、または言語が違う場合はテキストだけで訳し直す
-      const r = await ollamaChat(buildPrompt(html, src, s.target, s.ollamaModel, true), s);
-      if (tagIds(r) === tagIds(html) && looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) result = r;
+      const { text: r, truncated } = await ollamaChat(buildPrompt(html, s.target, true), s, maxTokensFor(html));
+      if (!truncated && tagIds(r) === tagIds(html) && looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) result = r;
     }
     if (result === null) {
       // 言語が違えばもう一度。temperature 0 同士だと同じ出力になるので、2 回目は値を変える
       const temps = (s.temperature || 0) === 0 ? [0, 0.3] : [s.temperature, 0];
       for (const temperature of temps) {
-        const r = await ollamaChat(buildPrompt(plain, src, s.target, s.ollamaModel, false), { ...s, temperature });
-        if (looksLikeTarget(r, plain, s.target)) { result = escapeHtml(r); break; }
-        console.warn('[translate-toggle] 指定と違う言語の訳を破棄しました:', r.slice(0, 80));
+        const { text: r, truncated } = await ollamaChat(buildPrompt(plain, s.target, false), { ...s, temperature }, maxTokensFor(plain));
+        if (!truncated && looksLikeTarget(r, plain, s.target)) { result = escapeHtml(r); break; }
+        if (!truncated) console.warn('[translate-toggle] 指定と違う言語の訳を破棄しました:', r.slice(0, 80));
       }
     }
     // それでも指定の言語にならなければ、誤った言語を表示するより原文のまま残す
