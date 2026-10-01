@@ -25,9 +25,28 @@
   let mode = 'original';
   let settings = { target: 'ja', hover: true, engine: 'azure' };
 
+  // 数式（MathJax / KaTeX / MathML、論文サイトの独自タグ）。中の文字は訳さない。
+  // 文中の数式は 1 要素としてそのまま残し、独立した行の数式はそこで文を区切って触らない
+  const MATH = 'math, mjx-container, .MathJax, .katex, inline-formula, tex-math';
+  const MATH_BLOCK = 'disp-formula, .MathJax_Display, .katex-display, mjx-container[display="true"], math[display="block"]';
+  const MATH_HIDDEN = 'script[type^="math/"], .MathJax_Preview'; // 画面に出ない補助要素（TeX のソースなど）
+  const MATH_LABEL_MAX = 40; // これより長い数式は、モデルには中身を見せず目印だけ渡す
+
   const isNoTranslate = (el) => el.getAttribute('translate') === 'no' || el.classList.contains('notranslate');
-  const isInline = (el) => INLINE.has(el.localName) || OPAQUE.has(el.localName);
-  const isOpaque = (el) => OPAQUE.has(el.localName) || isNoTranslate(el);
+  const isMath = (el) => el.matches(MATH);
+  const isHidden = (el) => el.matches(MATH_HIDDEN);
+  const isInline = (el) => !el.matches(MATH_BLOCK) && (INLINE.has(el.localName) || OPAQUE.has(el.localName) || isMath(el) || isHidden(el));
+  const isOpaque = (el) => OPAQUE.has(el.localName) || isNoTranslate(el) || isMath(el) || isHidden(el);
+  // 訳す対象になる文字（そのまま残す要素の中身は含めない）
+  const ownText = (n) => (n.nodeType === 8 || (n.nodeType === 1 && isOpaque(n)) ? '' : n.textContent);
+
+  // モデルに見せる数式の表記。描画用の文字だけを取り出す（TeX のソースや読み上げ用の重複は除く）
+  function mathLabel(el) {
+    const c = el.cloneNode(true);
+    c.querySelectorAll('script, annotation, .MathJax_Preview, .MJX_Assistive_MathML, .katex-mathml').forEach((n) => n.remove());
+    const t = c.textContent.replace(/\s+/g, ' ').trim();
+    return t && t.length <= MATH_LABEL_MAX ? t : '#';
+  }
 
   function needsTranslation(text) {
     const t = text.trim();
@@ -39,7 +58,7 @@
   // ---------- 走査 ----------
   function scan(root) {
     if (root.nodeType !== 1 || ours.has(root) || root === host) return;
-    if (SKIP.has(root.localName) || root.isContentEditable || isNoTranslate(root)) return;
+    if (SKIP.has(root.localName) || root.isContentEditable || isNoTranslate(root) || root.matches(MATH_BLOCK)) return;
     let run = [];
     const flush = () => { if (run.length) makeUnit(root, run); run = []; };
     for (const child of Array.from(root.childNodes)) {
@@ -57,7 +76,7 @@
     if (meaningful.length === 1 && meaningful[0].nodeType === 1 && !isOpaque(meaningful[0])) {
       return scan(meaningful[0]);
     }
-    const text = run.map((n) => (n.nodeType === 8 ? '' : n.textContent)).join('');
+    const text = run.map(ownText).join('');
     if (!needsTranslation(text)) return;
     if (text.length > MAX_UNIT_CHARS) {
       for (const n of run) if (n.nodeType === 1 && !isOpaque(n)) scan(n);
@@ -207,9 +226,11 @@
       if (node.nodeType === 3) return esc(node.nodeValue);
       if (node.nodeType !== 1) return '';
       if (node.localName === 'br') return '<br>';
+      if (isHidden(node)) return ''; // 見えない要素なので訳文側では省く（原文に戻せば元どおり）
       const i = refs.push(node) - 1;
       if (isOpaque(node)) {
-        return `<span id="k${i}" class="notranslate">${esc(node.textContent.trim()) || '#'}</span>`;
+        const label = isMath(node) ? mathLabel(node) : node.textContent.trim();
+        return `<span id="k${i}" class="notranslate">${esc(label) || '#'}</span>`;
       }
       return `<span id="k${i}">${Array.from(node.childNodes).map(ser).join('')}</span>`;
     };

@@ -101,6 +101,9 @@ const unescapeHtml = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replac
 const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const stripTags = (s) => s.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '');
 const tagIds = (s) => (s.match(/id="k\d+"/g) || []).sort().join(',');
+// そのまま残す要素（数式・コード・画像など）が、訳文に 1 つずつ残っているか
+const opaqueIds = (s) => s.match(/id="k\d+"(?= class="notranslate")/g) || [];
+const keepsOpaque = (r, html) => opaqueIds(html).every((id) => r.split(id).length === 2);
 
 function cleanOutput(s) {
   return s
@@ -266,12 +269,18 @@ async function translateOllama(texts, s, srcLangs = []) {
     const styles = /translategemma/i.test(s.ollamaModel) ? [true, false] : [false];
     if (html.includes('<span')) {
       // タグ付きで翻訳。タグが崩れた、または言語が違う場合はテキストだけで訳し直す
+      let partial = null; // 一部のタグ（リンクなど）は落ちたが、そのまま残す要素は揃っている訳
       for (const official of styles) {
         const { text: r, truncated } = await ollamaChat(buildPrompt(html, src, s.target, true, official), s, maxTokensFor(html));
-        if (!truncated && tagIds(r) === tagIds(html) && looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) { result = r; break; }
+        if (truncated || !looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) continue;
+        if (tagIds(r) === tagIds(html)) { result = r; break; }
+        if (keepsOpaque(r, html) && tagIds(r).length > tagIds(partial ?? '').length) partial = r;
       }
+      // リンクが一部消えるだけの訳があれば、テキストだけで訳し直す（すべて消える）よりそれを使う
+      result ??= partial;
     }
-    if (result === null) {
+    // テキストだけで訳すと数式や画像などが消えてしまうので、それらを含む段落では行わない（原文のまま残す）
+    if (result === null && !opaqueIds(html).length) {
       // 言語が違えばもう一度。temperature 0 同士だと同じ出力になるので、2 回目は値を変える
       const temps = (s.temperature || 0) === 0 ? [0, 0.3] : [s.temperature, 0];
       for (const temperature of temps) {
