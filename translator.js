@@ -194,13 +194,24 @@ async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temper
 }
 
 // ---------- プロンプト ----------
-// TranslateGemma 公式のプロンプト形式（原文の言語を明示する形）は、
-// 日本語以外に訳されることがあったため使わない。
-function buildPrompt(text, tgt, isHtml) {
+const TAG_RULE = 'Keep every <span id="..."> tag with its exact attributes, and put each one around the words that correspond to its original content. Keep <br> tags. Do not translate text inside tags that have class="notranslate".';
+
+// official: TranslateGemma の学習時の形式（原文の言語を明示する形）。汎用のプロンプトより
+// 指定と違う言語になりにくい。公式形式にはタグの扱いがないので、タグ付きのときは指示を足す。
+function buildPrompt(text, src, tgt, isHtml, official) {
   const T = langName(tgt);
+  if (official) {
+    const sc = src || 'en'; // 推定できないときは英語とみなす
+    const S = langName(sc);
+    return `You are a professional ${S} (${sc}) to ${T} (${tgt}) translator. Your goal is to accurately convey the meaning and nuances of the original ${S} text while adhering to ${T} grammar, vocabulary, and cultural sensitivities.
+Produce only the ${T} translation, without any additional explanations or commentary.${isHtml ? ` The text is an HTML fragment. ${TAG_RULE}` : ''} Please translate the following ${S} text into ${T}:
+
+
+${text}`;
+  }
   if (isHtml) {
     return `Translate the following HTML fragment into ${T}. Output only the translated fragment, without any explanation.
-Keep every <span id="..."> tag with its exact attributes, and put each one around the words that correspond to its original content. Keep <br> tags. Do not translate text inside tags that have class="notranslate".
+${TAG_RULE}
 
 ${text}`;
   }
@@ -250,16 +261,21 @@ async function translateOllama(texts, s, srcLangs = []) {
     if (src && baseLang(src) === baseLang(s.target)) { out.push(html); continue; }
 
     let result = null;
+    // TranslateGemma には公式形式を先に使い、だめなら汎用のプロンプトでもう一度試す
+    // （公式形式はタグを落とすことがあり、汎用は違う言語になることがある）
+    const styles = /translategemma/i.test(s.ollamaModel) ? [true, false] : [false];
     if (html.includes('<span')) {
       // タグ付きで翻訳。タグが崩れた、または言語が違う場合はテキストだけで訳し直す
-      const { text: r, truncated } = await ollamaChat(buildPrompt(html, s.target, true), s, maxTokensFor(html));
-      if (!truncated && tagIds(r) === tagIds(html) && looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) result = r;
+      for (const official of styles) {
+        const { text: r, truncated } = await ollamaChat(buildPrompt(html, src, s.target, true, official), s, maxTokensFor(html));
+        if (!truncated && tagIds(r) === tagIds(html) && looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) { result = r; break; }
+      }
     }
     if (result === null) {
       // 言語が違えばもう一度。temperature 0 同士だと同じ出力になるので、2 回目は値を変える
       const temps = (s.temperature || 0) === 0 ? [0, 0.3] : [s.temperature, 0];
       for (const temperature of temps) {
-        const { text: r, truncated } = await ollamaChat(buildPrompt(plain, s.target, false), { ...s, temperature }, maxTokensFor(plain));
+        const { text: r, truncated } = await ollamaChat(buildPrompt(plain, src, s.target, false, styles[0]), { ...s, temperature }, maxTokensFor(plain));
         if (!truncated && looksLikeTarget(r, plain, s.target)) { result = escapeHtml(r); break; }
         if (!truncated) console.warn('[translate-toggle] 指定と違う言語の訳を破棄しました:', r.slice(0, 80));
       }
