@@ -1,7 +1,14 @@
 // 翻訳エンジン（Azure / Ollama）の呼び出し本体。
 // offscreen.js と background.js（offscreen が使えない環境向けの予備経路）の両方から読み込む。
 const AZURE_ENDPOINT = 'https://api.cognitive.microsofttranslator.com/translate';
-const LANG_NAMES = { ja: 'Japanese', en: 'English', 'zh-Hans': 'Simplified Chinese', 'zh-Hant': 'Traditional Chinese', ko: 'Korean' };
+const LANG_NAMES = {
+  ja: 'Japanese', en: 'English', zh: 'Chinese', 'zh-Hans': 'Simplified Chinese', 'zh-CN': 'Simplified Chinese',
+  'zh-Hant': 'Traditional Chinese', 'zh-TW': 'Traditional Chinese', ko: 'Korean', fr: 'French', de: 'German',
+  es: 'Spanish', it: 'Italian', pt: 'Portuguese', ru: 'Russian', ar: 'Arabic', hi: 'Hindi', vi: 'Vietnamese',
+  th: 'Thai', id: 'Indonesian', nl: 'Dutch', pl: 'Polish', tr: 'Turkish', uk: 'Ukrainian', sv: 'Swedish', cs: 'Czech',
+};
+const langName = (code) => LANG_NAMES[code] || LANG_NAMES[String(code).split('-')[0]] || code;
+const baseLang = (code) => String(code || '').split('-')[0].toLowerCase();
 const AZURE_TIMEOUT_MS = 60_000;
 const OLLAMA_TIMEOUT_MS = 280_000; // Service Worker の 1 イベント 5 分制限より短く
 
@@ -10,23 +17,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 設定の誤りなど、再試行しても直らないエラー
 class FatalError extends Error {}
 
-// msg: { type: 'translate' | 'translateHQ' | 'translateLight', texts, vary }
+// msg: { type: 'translate' | 'translateHQ' | 'translateLight', texts, srcLangs, vary }
+// srcLangs: 各テキストの原文の言語コード（content.js が推定。不明なら null）
 // s: 設定, onUsage: Azure の送信文字数を記録する関数
 // vary: 同じモデルで訳し直すとき true。temperature 0 だと毎回同じ訳になるため、少し揺らす
 async function runTranslation(msg, s, onUsage) {
-  const temperature = msg.vary ? 0.7 : 0;
+  const temperature = msg.vary ? 0.4 : 0;
+  const src = msg.srcLangs || [];
   if (msg.type === 'translateHQ') {
     if (!s.ollamaModelHQ) throw new FatalError('再翻訳用の高品質モデルが未設定です。');
-    return translateOllama(msg.texts, { ...s, ollamaModel: s.ollamaModelHQ, temperature });
+    return translateOllama(msg.texts, { ...s, ollamaModel: s.ollamaModelHQ, temperature }, src);
   }
   if (msg.type === 'translateLight') {
     if (!s.ollamaModel) throw new FatalError('通常の翻訳に使うモデルが未設定です。');
-    return translateOllama(msg.texts, { ...s, temperature });
+    return translateOllama(msg.texts, { ...s, temperature }, src);
   }
-  if (s.engine === 'ollama') return translateOllama(msg.texts, s);
+  if (s.engine === 'ollama') return translateOllama(msg.texts, s, src);
   if (s.engine === 'ollamaHQ') {
     if (!s.ollamaModelHQ) throw new FatalError('高品質モデルが未設定です。');
-    return translateOllama(msg.texts, { ...s, ollamaModel: s.ollamaModelHQ });
+    return translateOllama(msg.texts, { ...s, ollamaModel: s.ollamaModelHQ }, src);
   }
   return translateAzure(msg.texts, s, onUsage);
 }
@@ -156,25 +165,89 @@ async function ollamaChat(prompt, { ollamaUrl, ollamaModel, ollamaNumCtx, temper
   }
 }
 
-async function translateOllama(texts, s) {
-  if (!s.ollamaModel) throw new FatalError('モデル名が未設定です。');
-  const lang = LANG_NAMES[s.target] || s.target;
-  const out = [];
-  for (const html of texts) {
-    const plain = unescapeHtml(stripTags(html));
-    if (html.includes('<span')) {
-      // タグ付きで翻訳し、タグが崩れていたらテキストだけで訳し直す
-      const prompt = `Translate the following HTML fragment into ${lang}. Output only the translated fragment, without any explanation.
+// ---------- プロンプト ----------
+// TranslateGemma は学習時のプロンプト形式（原文の言語を明示する形）から外れると、
+// 指定と違う言語に訳したり説明文を付けたりしやすい。公式の形式どおりに組み立てる。
+function buildPrompt(text, src, tgt, model, isHtml) {
+  const T = langName(tgt);
+  if (/translategemma/i.test(model)) {
+    const sc = src || 'en'; // 推定できないときは英語とみなす（モデルは入力から言語を判断できることが多い）
+    const S = langName(sc);
+    return `You are a professional ${S} (${sc}) to ${T} (${tgt}) translator. Your goal is to accurately convey the meaning and nuances of the original ${S} text while adhering to ${T} grammar, vocabulary, and cultural sensitivities.
+Produce only the ${T} translation, without any additional explanations or commentary. Please translate the following ${S} text into ${T}:
+
+
+${text}`;
+  }
+  const from = src ? ` from ${langName(src)}` : '';
+  if (isHtml) {
+    return `Translate the following HTML fragment${from} into ${T}. Output only the ${T} translation of the fragment, without any explanation.
 Keep every <span id="..."> tag with its exact attributes, and put each one around the words that correspond to its original content. Keep <br> tags. Do not translate text inside tags that have class="notranslate".
 
-${html}`;
-      const r = await ollamaChat(prompt, s);
-      if (tagIds(r) === tagIds(html)) { out.push(r); continue; }
-    }
-    const prompt = `Translate the following text into ${lang}. Output only the translation, without any explanation.
+${text}`;
+  }
+  return `Translate the following text${from} into ${T}. Output only the ${T} translation, without any explanation.
 
-${plain}`;
-    out.push(escapeHtml(await ollamaChat(prompt, s)));
+${text}`;
+}
+
+// ---------- 訳文が指定した言語になっているかの簡易チェック ----------
+const countMatches = (s, re) => (s.match(re) || []).length;
+function looksLikeTarget(out, input, tgt) {
+  const o = out.trim();
+  if (!o) return false;
+  if (o === input.trim()) return true; // 固有名詞やコードなど、訳さずそのまま返すのが正しい場合
+  const kana = countMatches(o, /[\u3040-\u30ff]/g);
+  const han = countMatches(o, /[\u3400-\u9fff]/g);
+  const hangul = countMatches(o, /[\uac00-\ud7af\u1100-\u11ff]/g);
+  const other = countMatches(o, /[\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f\u0900-\u097f]/g); // キリル・アラビア・タイ・デーヴァナーガリー
+  const letters = countMatches(o, /\p{L}/gu);
+  const short = o.split(/\s+/).length <= 2 && o.length <= 24; // 短い語句はそのまま残ることがある
+  switch (baseLang(tgt)) {
+    case 'ja':
+      if (hangul || other) return false;
+      if (kana) return true;
+      if (han) return han <= 12;        // 漢字だけの短い見出しはあり得るが、長文で仮名がなければ中国語の可能性が高い
+      return short;                      // ラテン文字だけ = 訳されていない、または別の言語
+    case 'ko':
+      return hangul > 0 || short;
+    case 'zh':
+      if (kana || hangul || other) return false;
+      return han > 0 || short;
+    case 'en':
+      return kana + han + hangul + other < letters * 0.2;
+    default:
+      return true;
+  }
+}
+
+async function translateOllama(texts, s, srcLangs = []) {
+  if (!s.ollamaModel) throw new FatalError('モデル名が未設定です。');
+  const out = [];
+  for (let i = 0; i < texts.length; i++) {
+    const html = texts[i];
+    const src = srcLangs[i] || null;
+    const plain = unescapeHtml(stripTags(html));
+    // 原文がすでに翻訳先の言語なら、モデルに渡さずそのまま返す
+    if (src && baseLang(src) === baseLang(s.target)) { out.push(html); continue; }
+
+    let result = null;
+    if (html.includes('<span')) {
+      // タグ付きで翻訳。タグが崩れた、または言語が違う場合はテキストだけで訳し直す
+      const r = await ollamaChat(buildPrompt(html, src, s.target, s.ollamaModel, true), s);
+      if (tagIds(r) === tagIds(html) && looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) result = r;
+    }
+    if (result === null) {
+      // 言語が違えばもう一度。temperature 0 同士だと同じ出力になるので、2 回目は値を変える
+      const temps = (s.temperature || 0) === 0 ? [0, 0.3] : [s.temperature, 0];
+      for (const temperature of temps) {
+        const r = await ollamaChat(buildPrompt(plain, src, s.target, s.ollamaModel, false), { ...s, temperature });
+        if (looksLikeTarget(r, plain, s.target)) { result = escapeHtml(r); break; }
+        console.warn('[translate-toggle] 指定と違う言語の訳を破棄しました:', r.slice(0, 80));
+      }
+    }
+    // それでも指定の言語にならなければ、誤った言語を表示するより原文のまま残す
+    out.push(result ?? html);
   }
   return out;
 }

@@ -91,6 +91,22 @@
   const MAX_TRIES = 3;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // 原文の言語を推定する（ローカルモデルのプロンプトで原文の言語を明示するため）。
+  // 短い文などで推定が不確かなときは、ページ全体の lang 属性を使う
+  const pageLang = (document.documentElement.lang || '').trim() || null;
+  async function detectSrc(u) {
+    if (u.srcLang !== undefined) return u.srcLang;
+    let lang = null;
+    try {
+      const text = u.original.map((n) => (n.nodeType === 8 ? '' : n.textContent)).join('').trim();
+      const r = await chrome.i18n.detectLanguage(text);
+      const top = r && r.languages && r.languages[0];
+      if (top && top.language !== 'und' && (r.isReliable || top.percentage >= 60)) lang = top.language;
+    } catch {}
+    u.srcLang = lang || pageLang;
+    return u.srcLang;
+  }
+
   function enqueue(u) {
     if (u.requested || u.dead) return;
     u.requested = true;
@@ -134,7 +150,8 @@
           batch.push(queue.shift());
           chars += len;
         }
-        const res = await callTranslator('translate', batch.map((u) => u.payload.html));
+        const srcLangs = await Promise.all(batch.map(detectSrc));
+        const res = await callTranslator('translate', batch.map((u) => u.payload.html), { srcLangs });
 
         if (res.ok) {
           res.translations.forEach((html, i) => {
@@ -362,7 +379,8 @@
     us.forEach((u) => { u.rePending = true; });
     try {
       const type = which === 'hq' ? 'translateHQ' : 'translateLight';
-      const res = await callTranslator(type, us.map((u) => u.payload.html), { vary });
+      const srcLangs = await Promise.all(us.map(detectSrc));
+      const res = await callTranslator(type, us.map((u) => u.payload.html), { vary, srcLangs });
       if (!res.ok) { showError(res.error); return; }
       res.translations.forEach((html, i) => {
         const u = us[i];

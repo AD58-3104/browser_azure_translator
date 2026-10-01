@@ -7,8 +7,15 @@ const $ = (id) => document.getElementById(id);
 const status = (text, cls = '') => { $('status').textContent = text; $('status').className = cls; };
 let route = '';
 async function callTranslator(type, texts) {
-  const off = await chrome.runtime.sendMessage({ type: 'ensureOffscreen' });
-  const to = off && off.ok ? 'offscreen' : 'background';
+  let off;
+  try {
+    off = await chrome.runtime.sendMessage({ type: 'ensureOffscreen' });
+  } catch (e) {
+    throw new Error(`バックグラウンド処理（Service Worker）に接続できません: ${e.message || e}`);
+  }
+  // 応答が空 = Service Worker が起動に失敗しているか、メッセージを処理できていない
+  if (!off) throw new Error('バックグラウンド処理（Service Worker）が応答していません。拡張機能の管理画面でエラーを確認してください。');
+  const to = off.ok ? 'offscreen' : 'background';
   route = to === 'offscreen' ? 'offscreen 経由' : `予備経路（offscreen 不可: ${off?.error || '不明'}）`;
   const res = await chrome.runtime.sendMessage({ type, texts, to });
   if (!res) throw new Error(`翻訳処理から応答がありません（${route}）`);
