@@ -30,7 +30,8 @@
   const MATH = 'math, mjx-container, .MathJax, .katex, inline-formula, tex-math';
   const MATH_BLOCK = 'disp-formula, .MathJax_Display, .katex-display, mjx-container[display="true"], math[display="block"]';
   const MATH_HIDDEN = 'script[type^="math/"], .MathJax_Preview'; // 画面に出ない補助要素（TeX のソースなど）
-  const MATH_LABEL_MAX = 40; // これより長い数式は、モデルには中身を見せず目印だけ渡す
+  const MATH_TEX = 'math[alttext], annotation[encoding="application/x-tex"], script[type^="math/tex"]'; // TeX のソースを持つ要素
+  const MATH_LABEL_MAX = 60; // これより長い数式は、モデルには中身を見せず目印だけ渡す
 
   const isNoTranslate = (el) => el.getAttribute('translate') === 'no' || el.classList.contains('notranslate');
   const isMath = (el) => el.matches(MATH);
@@ -40,11 +41,19 @@
   // 訳す対象になる文字（そのまま残す要素の中身は含めない）
   const ownText = (n) => (n.nodeType === 8 || (n.nodeType === 1 && isOpaque(n)) ? '' : n.textContent);
 
-  // モデルに見せる数式の表記。描画用の文字だけを取り出す（TeX のソースや読み上げ用の重複は除く）
+  // モデルに見せる数式の表記。TeX のソースがあればそれを使う。描画用の文字を並べただけの文字列
+  // （s_t^{p,sim} が「stp,sim」になる）だと、モデルがタグを落としたり、訳さずに返したりしやすい
   function mathLabel(el) {
-    const c = el.cloneNode(true);
-    c.querySelectorAll('script, annotation, .MathJax_Preview, .MJX_Assistive_MathML, .katex-mathml').forEach((n) => n.remove());
-    const t = c.textContent.replace(/\s+/g, ' ').trim();
+    const next = el.nextElementSibling; // MathJax v2 は TeX のソースを直後の script に置く
+    const src = el.matches(MATH_TEX) ? el : el.querySelector(MATH_TEX) || (next?.matches(MATH_TEX) ? next : null);
+    let t = src ? src.getAttribute('alttext') || src.textContent : '';
+    if (!t.trim()) {
+      // ソースがなければ、描画用の文字だけを取り出す（読み上げ用の重複は除く）
+      const c = el.cloneNode(true);
+      c.querySelectorAll('script, annotation, .MathJax_Preview, .MJX_Assistive_MathML, .katex-mathml').forEach((n) => n.remove());
+      t = c.textContent;
+    }
+    t = t.replace(/\s+/g, ' ').trim();
     return t && t.length <= MATH_LABEL_MAX ? t : '#';
   }
 
