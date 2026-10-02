@@ -95,6 +95,10 @@
     <option value="ko">韓国語</option>
   </select>
 
+  <label for="minWords">翻訳する文の最小単語数
+    <span class="hint">これより単語数が少ない語句（目次、メニュー、見出しなど）は翻訳しません。0 にするとすべて翻訳します。変更は、ページを再読み込みして翻訳し直すと反映されます</span></label>
+  <input id="minWords" type="number" min="0" step="1" placeholder="15">
+
   <label class="check"><input id="hover" type="checkbox">
     <span>Ctrl を押しながらマウスを乗せると、その部分の原文を表示する</span></label>
 

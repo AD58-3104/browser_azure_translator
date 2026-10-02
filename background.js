@@ -9,6 +9,7 @@ const DEFAULTS = {
   ollamaModelHQ: 'translategemma:12b', // 段落単位の再翻訳用
   ollamaNumCtx: '',                    // 空なら Ollama の既定値
   target: 'ja', hover: true,
+  minWords: 15,                        // これより単語数が少ない語句は翻訳しない（0 ならすべて翻訳）
 };
 
 const getSettings = () => chrome.storage.local.get(DEFAULTS);
@@ -25,8 +26,8 @@ async function toggleTab(tab) {
   try {
     await ensureOffscreen().catch((e) => { offscreenError = String(e.message || e); });
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
-    const { target, hover, engine } = await getSettings();
-    const state = await chrome.tabs.sendMessage(tab.id, { type: 'toggle', target, hover, engine });
+    const { target, hover, engine, minWords } = await getSettings();
+    const state = await chrome.tabs.sendMessage(tab.id, { type: 'toggle', target, hover, engine, minWords });
     setBadge(tab.id, state);
   } catch (e) {
     // edge:// や拡張機能ストアなど、スクリプトを挿入できないページ

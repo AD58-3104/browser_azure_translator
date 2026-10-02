@@ -23,7 +23,7 @@
 
   let active = false;
   let mode = 'original';
-  let settings = { target: 'ja', hover: true, engine: 'azure' };
+  let settings = { target: 'ja', hover: true, engine: 'azure', minWords: 0 };
 
   // 数式（MathJax / KaTeX / MathML、論文サイトの独自タグ）。中の文字は訳さない。
   // 文中の数式は 1 要素としてそのまま残し、独立した行の数式はそこで文を区切って触らない
@@ -48,11 +48,19 @@
     return t && t.length <= MATH_LABEL_MAX ? t : '#';
   }
 
+  // 単語が min 個以上あるか。区切りはブラウザに任せる（空白で区切らない言語でも数えられる）
+  const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
+  function hasWords(text, min) {
+    let n = 0;
+    for (const s of segmenter.segment(text)) if (s.isWordLike && ++n >= min) return true;
+    return n >= min;
+  }
+
   function needsTranslation(text) {
     const t = text.trim();
     if (!/\p{L}/u.test(t)) return false;                         // 数字や記号だけ
     if (settings.target === 'ja' && /[\u3040-\u30ff]/.test(t)) return false; // すでに日本語
-    return true;
+    return hasWords(t, settings.minWords); // 目次やメニューなどの短い語句は訳さない
   }
 
   // ---------- 走査 ----------
@@ -466,7 +474,7 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'retranslate') { retranslateAtCursor(msg.which, msg.model, msg.engine); sendResponse(true); return; }
     if (msg.type !== 'toggle') return;
-    settings = { target: msg.target || 'ja', hover: msg.hover !== false, engine: msg.engine || 'azure' };
+    settings = { target: msg.target || 'ja', hover: msg.hover !== false, engine: msg.engine || 'azure', minWords: Number(msg.minWords) || 0 };
     if (!active) { activate(); mode = 'translated'; }
     else mode = mode === 'translated' ? 'original' : 'translated';
     if (mode === 'translated') retryFailed();

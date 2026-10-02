@@ -1,7 +1,7 @@
 const DEFAULTS = {
   engine: 'azure', apiKey: '', region: '',
   ollamaUrl: 'http://localhost:11434', ollamaModel: 'translategemma:4b', ollamaModelHQ: 'translategemma:12b', ollamaNumCtx: '',
-  target: 'ja', hover: true,
+  target: 'ja', hover: true, minWords: 15,
 };
 const $ = (id) => document.getElementById(id);
 const status = (text, cls = '') => { $('status').textContent = text; $('status').className = cls; };
@@ -60,12 +60,14 @@ async function load() {
   $('ollamaNumCtx').value = s.ollamaNumCtx;
   $('target').value = s.target;
   $('hover').checked = s.hover;
+  $('minWords').value = s.minWords;
   updateVisibility();
   const u = await chrome.runtime.sendMessage({ type: 'getUsage' });
   $('usage').textContent = `${u.chars.toLocaleString()} 文字（${u.month}）`;
 }
 
 async function save() {
+  const minWords = parseInt($('minWords').value, 10);
   await chrome.storage.local.set({
     engine: engine(),
     apiKey: $('apiKey').value.trim(),
@@ -76,6 +78,7 @@ async function save() {
     ollamaNumCtx: $('ollamaNumCtx').value.trim(),
     target: $('target').value,
     hover: $('hover').checked,
+    minWords: minWords >= 0 ? minWords : DEFAULTS.minWords, // 空欄や不正な値は既定値に戻す
   });
   status('保存しました', 'ok');
 }
