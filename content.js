@@ -43,11 +43,14 @@
 
   // モデルに見せる数式の表記。TeX のソースがあればそれを使う。描画用の文字を並べただけの文字列
   // （s_t^{p,sim} が「stp,sim」になる）だと、モデルがタグを落としたり、訳さずに返したりしやすい
-  function mathLabel(el) {
+  function mathSource(el) {
     const next = el.nextElementSibling; // MathJax v2 は TeX のソースを直後の script に置く
     const src = el.matches(MATH_TEX) ? el : el.querySelector(MATH_TEX) || (next?.matches(MATH_TEX) ? next : null);
-    let t = src ? src.getAttribute('alttext') || src.textContent : '';
-    if (!t.trim()) {
+    return src ? (src.getAttribute('alttext') || src.textContent).trim() : '';
+  }
+  function mathLabel(el) {
+    let t = mathSource(el);
+    if (!t) {
       // ソースがなければ、描画用の文字だけを取り出す（読み上げ用の重複は除く）
       const c = el.cloneNode(true);
       c.querySelectorAll('script, annotation, .MathJax_Preview, .MJX_Assistive_MathML, .katex-mathml').forEach((n) => n.remove());
@@ -455,13 +458,23 @@
 
   let lastMouse = null;
   function updateTip(x, y, ctrl) {
-    if (!settings.hover || !ctrl || mode !== 'translated') { tip.style.display = 'none'; return; }
+    tip.style.display = 'none';
+    if (!settings.hover) return;
     const el = document.elementFromPoint(x, y);
-    const us = el ? unitsAt(el) : [];
-    if (!us.length) { tip.style.display = 'none'; return; }
+    if (!el) return;
+    // 数式の上では、Ctrl なしで TeX のソースを表示する（独立した行の数式は外側の要素から探す）
+    const math = el.closest(MATH_BLOCK) || el.closest(MATH);
+    const tex = math && mathSource(math);
+    if (tex) { tip.textContent = tex; return placeTip(x, y); }
+    if (!ctrl || mode !== 'translated') return;
+    const us = unitsAt(el);
+    if (!us.length) return;
     const labels = [...new Set(us.filter((u) => u.sourceLabel).map((u) => u.sourceLabel))];
     tip.textContent = (labels.length ? `［${labels.join('・')} で再翻訳済み］\n` : '') + us.map((u) => u.original.map((n) => (n.nodeType === 8 ? '' : n.textContent)).join('')
       .replace(/\s+/g, ' ').trim()).join('\n');
+    placeTip(x, y);
+  }
+  function placeTip(x, y) {
     tip.style.display = 'block';
     const r = tip.getBoundingClientRect();
     tip.style.left = Math.min(x + 12, innerWidth - r.width - 8) + 'px';
@@ -469,7 +482,7 @@
   }
   addEventListener('mousemove', (e) => { lastMouse = e; updateTip(e.clientX, e.clientY, e.ctrlKey); }, true);
   addEventListener('keydown', (e) => { if (e.key === 'Control' && lastMouse) updateTip(lastMouse.clientX, lastMouse.clientY, true); }, true);
-  addEventListener('keyup', (e) => { if (e.key === 'Control') tip.style.display = 'none'; }, true);
+  addEventListener('keyup', (e) => { if (e.key === 'Control' && lastMouse) updateTip(lastMouse.clientX, lastMouse.clientY, false); }, true);
   addEventListener('scroll', () => { tip.style.display = 'none'; }, true);
 
   // ---------- 切り替え ----------
