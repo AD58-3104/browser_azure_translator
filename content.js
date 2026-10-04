@@ -457,15 +457,32 @@
   }
 
   let lastMouse = null;
+  // その要素が数式の中にあれば、TeX のソースを返す（独立した行の数式は外側の要素から探す）
+  function texAt(el) {
+    const math = el.closest(MATH_BLOCK) || el.closest(MATH);
+    return math ? mathSource(math) : '';
+  }
+  // 数式をクリックすると TeX のソースをコピーする（文字を選択する操作のときは何もしない）
+  addEventListener('click', async (e) => {
+    if (!settings.hover || !getSelection().isCollapsed) return;
+    const tex = texAt(e.target);
+    if (!tex) return;
+    try {
+      await navigator.clipboard.writeText(tex);
+      showToast('TeX のソースをコピーしました');
+    } catch {
+      showToast('TeX のソースをコピーできませんでした（このページではクリップボードを使えません）', true);
+    }
+  }, true);
+
   function updateTip(x, y, ctrl) {
     tip.style.display = 'none';
     if (!settings.hover) return;
     const el = document.elementFromPoint(x, y);
     if (!el) return;
-    // 数式の上では、Ctrl なしで TeX のソースを表示する（独立した行の数式は外側の要素から探す）
-    const math = el.closest(MATH_BLOCK) || el.closest(MATH);
-    const tex = math && mathSource(math);
-    if (tex) { tip.textContent = tex; return placeTip(x, y); }
+    // 数式の上では、Ctrl なしで TeX のソースを表示する
+    const tex = texAt(el);
+    if (tex) { tip.textContent = `${tex}\n（クリックでコピー）`; return placeTip(x, y); }
     if (!ctrl || mode !== 'translated') return;
     const us = unitsAt(el);
     if (!us.length) return;
