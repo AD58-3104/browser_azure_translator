@@ -187,6 +187,8 @@
     flushing = true;
     try {
       while (queue.length) {
+        // 裏のタブや原文表示中は送らずに待つ（表に戻る・訳文表示に戻ると続きから再開）
+        while (document.hidden || mode !== 'translated') await sleep(500);
         // 画面に見えている段落を先に翻訳する（スクロールで通り過ぎた段落が順番待ちをふさがないように）
         queue.sort((a, b) => Number(visible.has(b.parent)) - Number(visible.has(a.parent)));
         const batch = [];
