@@ -253,6 +253,38 @@ function looksLikeTarget(out, input, tgt) {
   }
 }
 
+// タグの外にある文末（. ! ? の後に空白と大文字など、または 。）で区切り、各断片を maxChars 程度にまとめる
+function splitSentences(html, maxChars) {
+  const parts = [];
+  let depth = 0, start = 0;
+  const re = /<\/?span\b[^>]*>|[.!?](?=\s+(?:[A-Z(\["]|<))|。/g;
+  for (let m; (m = re.exec(html));) {
+    if (m[0][0] === '<') { depth += m[0][1] === '/' ? -1 : 1; continue; }
+    if (depth === 0) { parts.push(html.slice(start, m.index + 1)); start = m.index + 1; }
+  }
+  parts.push(html.slice(start));
+  const chunks = [];
+  for (const p of parts) {
+    if (chunks.length && chunks[chunks.length - 1].length + p.length <= maxChars) chunks[chunks.length - 1] += p;
+    else chunks.push(p);
+  }
+  return chunks.filter((c) => c.trim());
+}
+
+// タグ付きで翻訳する。styles の順にプロンプトを試し、タグが揃った訳を返す。
+// 揃わなければ、そのまま残す要素（数式など）だけは揃っている訳（リンクなどが一部消える）を返し、それもなければ null
+async function translateTagged(html, src, s, styles) {
+  const plain = unescapeHtml(stripTags(html));
+  let partial = null;
+  for (const official of styles) {
+    const { text: r, truncated } = await ollamaChat(buildPrompt(html, src, s.target, true, official), s, maxTokensFor(html));
+    if (truncated || !looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) continue;
+    if (tagIds(r) === tagIds(html)) return r;
+    if (keepsOpaque(r, html) && tagIds(r).length > tagIds(partial ?? '').length) partial = r;
+  }
+  return partial;
+}
+
 async function translateOllama(texts, s, srcLangs = []) {
   if (!s.ollamaModel) throw new FatalError('モデル名が未設定です。');
   const out = [];
@@ -268,16 +300,18 @@ async function translateOllama(texts, s, srcLangs = []) {
     // （公式形式はタグを落とすことがあり、汎用は違う言語になることがある）
     const styles = /translategemma/i.test(s.ollamaModel) ? [true, false] : [false];
     if (html.includes('<span')) {
-      // タグ付きで翻訳。タグが崩れた、または言語が違う場合はテキストだけで訳し直す
-      let partial = null; // 一部のタグ（リンクなど）は落ちたが、そのまま残す要素は揃っている訳
-      for (const official of styles) {
-        const { text: r, truncated } = await ollamaChat(buildPrompt(html, src, s.target, true, official), s, maxTokensFor(html));
-        if (truncated || !looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) continue;
-        if (tagIds(r) === tagIds(html)) { result = r; break; }
-        if (keepsOpaque(r, html) && tagIds(r).length > tagIds(partial ?? '').length) partial = r;
+      result = await translateTagged(html, src, s, styles);
+      if (result === null) {
+        // 数式やリンクが多い長い段落は 1 回では保てないことがあるので、文ごとに分けて訳す
+        const chunks = splitSentences(html, 600);
+        const parts = [];
+        for (const c of chunks.length > 1 ? chunks : []) {
+          const r = await translateTagged(c, src, s, styles);
+          if (r === null) { parts.length = 0; break; }
+          parts.push(r);
+        }
+        if (parts.length) result = parts.join(' ');
       }
-      // リンクが一部消えるだけの訳があれば、テキストだけで訳し直す（すべて消える）よりそれを使う
-      result ??= partial;
     }
     // テキストだけで訳すと数式や画像などが消えてしまうので、それらを含む段落では行わない（原文のまま残す）
     if (result === null && !opaqueIds(html).length) {

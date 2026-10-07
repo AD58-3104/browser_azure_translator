@@ -31,7 +31,7 @@
   const MATH_BLOCK = 'disp-formula, .MathJax_Display, .katex-display, mjx-container[display="true"], math[display="block"]';
   const MATH_HIDDEN = 'script[type^="math/"], .MathJax_Preview'; // 画面に出ない補助要素（TeX のソースなど）
   const MATH_TEX = 'math[alttext], annotation[encoding="application/x-tex"], script[type^="math/tex"]'; // TeX のソースを持つ要素
-  const MATH_LABEL_MAX = 60; // これより長い数式は、モデルには中身を見せず目印だけ渡す
+  const MATH_LABEL_MAX = 60; // これより長い数式は、先頭だけ切り詰めてモデルに渡す（「#」だけだとモデルが落としやすい）
 
   const isNoTranslate = (el) => el.getAttribute('translate') === 'no' || el.classList.contains('notranslate');
   const isMath = (el) => el.matches(MATH);
@@ -57,7 +57,7 @@
       t = c.textContent;
     }
     t = t.replace(/\s+/g, ' ').trim();
-    return t && t.length <= MATH_LABEL_MAX ? t : '#';
+    return t.length <= MATH_LABEL_MAX ? t || '#' : t.slice(0, MATH_LABEL_MAX) + '…';
   }
 
   // 単語が min 個以上あるか。区切りはブラウザに任せる（空白で区切らない言語でも数えられる）
