@@ -253,6 +253,10 @@ function looksLikeTarget(out, input, tgt) {
   }
 }
 
+// ponytail: 4b で測った目安。タグがこの数以上の段落は最初から文ごとに訳す。断片は SPLIT_CHARS 程度にまとめる
+const SPLIT_TAGS = 12;
+const SPLIT_CHARS = 600;
+
 // タグの外にある文末（. ! ? の後に空白と大文字など、または 。）で区切り、各断片を maxChars 程度にまとめる
 function splitSentences(html, maxChars) {
   const parts = [];
@@ -280,7 +284,7 @@ async function translateTagged(html, src, s, styles) {
     const { text: r, truncated } = await ollamaChat(buildPrompt(html, src, s.target, true, official), s, maxTokensFor(html));
     if (truncated || !looksLikeTarget(unescapeHtml(stripTags(r)), plain, s.target)) continue;
     if (tagIds(r) === tagIds(html)) return r;
-    if (keepsOpaque(r, html) && tagIds(r).length > tagIds(partial ?? '').length) partial = r;
+    if (keepsOpaque(r, html) && (partial === null || tagIds(r).length > tagIds(partial).length)) partial = r;
   }
   return partial;
 }
@@ -300,17 +304,24 @@ async function translateOllama(texts, s, srcLangs = []) {
     // （公式形式はタグを落とすことがあり、汎用は違う言語になることがある）
     const styles = /translategemma/i.test(s.ollamaModel) ? [true, false] : [false];
     if (html.includes('<span')) {
-      result = await translateTagged(html, src, s, styles);
-      if (result === null) {
-        // 数式やリンクが多い長い段落は 1 回では保てないことがあるので、文ごとに分けて訳す
-        const chunks = splitSentences(html, 600);
+      // 文ごとに分けて訳し、つなぎ合わせる。1 つでも訳せなければ null
+      const translateChunks = async (chunks) => {
         const parts = [];
-        for (const c of chunks.length > 1 ? chunks : []) {
+        for (const c of chunks) {
           const r = await translateTagged(c, src, s, styles);
-          if (r === null) { parts.length = 0; break; }
+          if (r === null) return null;
           parts.push(r);
         }
-        if (parts.length) result = parts.join(' ');
+        return parts.join(' ');
+      };
+      const chunks = splitSentences(html, SPLIT_CHARS);
+      if (chunks.length > 1 && tagIds(html).split(',').length >= SPLIT_TAGS) {
+        // 数式やリンクが多い段落は 1 回では保てないことが多いので、最初から文ごとに訳す
+        // （失敗してから分けると、失敗した分だけ時間が余計にかかる）
+        result = await translateChunks(chunks);
+      } else {
+        result = await translateTagged(html, src, s, styles);
+        if (result === null && chunks.length > 1) result = await translateChunks(chunks);
       }
     }
     // テキストだけで訳すと数式や画像などが消えてしまうので、それらを含む段落では行わない（原文のまま残す）
